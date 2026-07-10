@@ -1,35 +1,28 @@
-name: Build & Release netcfg Linux amd64
+name: Build netcfg Linux amd64
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: 完整拉取代码与标签
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: 安装Go 1.23
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.23"
 
-      - name: 编译静态Linux amd64二进制
+      - name: Compile static linux amd64 binary
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ./netcfg
-          test -f ./netcfg
-          ls -lh ./netcfg
+          mkdir -p out
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o out/netcfg
 
-      - name: 上传二进制至Release
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ./netcfg
-          generate_release_notes: true
-          fail_on_unmatched_files: true
+          name: netcfg-linux-amd64
+          path: out/netcfg
