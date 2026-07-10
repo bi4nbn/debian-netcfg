@@ -44,8 +44,8 @@ debian-netcfg/
 ├── dnstest.go    DNS连通性测试工具
 ├── main.go       程序入口、主菜单、系统概览展示
 ├── i18n.go       中英双语国际化词条
-├── ok.sh         静态编译脚本
-└── README.md    项目文档
+├── build.sh      静态编译脚本
+└── README.md     项目文档
 ```
 
 ## 编译方式
