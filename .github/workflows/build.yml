@@ -1,28 +1,35 @@
-name: Build & Auto Latest Release
+name: Build & Release netcfg Linux amd64
 on:
   push:
-    branches: [ main ]
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  build:
+  build-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: 完整拉取代码与标签
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装Go 1.23
+        uses: actions/setup-go@v5
         with:
           go-version: "1.23"
 
-      - name: 编译
+      - name: 编译静态Linux amd64二进制
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ./netcfg
           test -f ./netcfg
+          ls -lh ./netcfg
 
-      - name: 更新latest版本
+      - name: 上传二进制至Release
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: latest
           files: ./netcfg
+          generate_release_notes: true
           fail_on_unmatched_files: true
