@@ -25,5 +25,4 @@ jobs:
         with:
           tag_name: latest
           files: ./netcfg
-          overwrite: true
           fail_on_unmatched_files: true
