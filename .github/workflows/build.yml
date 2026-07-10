@@ -1,0 +1,27 @@
+name: Build netcfg Linux amd64
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Compile Linux amd64 static binary
+        run: |
+          mkdir -p out
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o out/netcfg
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: netcfg-linux-amd64
+          path: out/netcfg
