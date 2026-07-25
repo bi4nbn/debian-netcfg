@@ -1,12 +1,10 @@
 package main
-
 import (
 	"fmt"
 	"net"
 	"os"
 	"strings"
 )
-
 func BondConfig() bool {
 	fmt.Println(T("bond_title"))
 	fmt.Println()
@@ -90,7 +88,8 @@ func BondConfig() bool {
 	fmt.Println(T("bond_mode1"))
 	fmt.Println(T("bond_mode2"))
 	fmt.Println(T("bond_mode3"))
-	modeInput := ReadInput(T("select_bond_mode"), "1")
+	// 修改1：默认值改为3，回车直接选802.3ad
+	modeInput := ReadInput(T("select_bond_mode"), "3")
 	if modeInput == "0" {
 		Info(T("cancelled"))
 		return false
@@ -146,6 +145,15 @@ func BondConfig() bool {
 	Info(T("apply_network"))
 	// 1. 创建 bond0 接口并设置模式
 	_ = RunCmdSilent("ip", "link", "add", "bond0", "type", "bond", "mode", bondMode)
+
+	// 修改2+3：802.3ad 实时下发 layer3+4 哈希 + lacp_rate fast
+	if bondMode == "802.3ad" {
+		// 哈希策略
+		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4")
+		// LACP快速协商
+		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast")
+	}
+
 	// 2. 配置 IPv4 地址
 	mask := net.IPMask(net.ParseIP(ipv4Netmask).To4())
 	prefixLen, _ := mask.Size()
@@ -196,8 +204,7 @@ func BondConfig() bool {
 	} else {
 		Warn(T("gw_ping_fail"))
 	}
-	// ========== 后置静默安装 ifenslave ==========
-	// 配置已生效、连通性测试完成后，后台尝试补装；有网自动装上，无网不影响现有配置
+	// 后置静默安装 ifenslave
 	if !CommandExists("ifenslave") {
 		Info(T("try_install_ifenslave"))
 		installErr := RunCmdSilent("apt", "install", "-y", "-qq", "ifenslave")
