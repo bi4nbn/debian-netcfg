@@ -1,7 +1,5 @@
 package main
-
 var currentLang = "en"
-
 func T(key string) string {
 	zh := map[string]string{
 		"menu_title":       "Debian 网络配置工具",
@@ -15,20 +13,17 @@ func T(key string) string {
 		"menu_invalid":     "无效选项，请重新输入",
 		"menu_exit":        "正在退出工具...",
 		"press_enter_menu": "按回车返回主菜单",
-
 		"switch_lang_title": "切换语言",
 		"select_lang":       "请选择语言：",
 		"lang_en":           "1. English",
 		"lang_zh":           "2. 中文",
 		"lang_prompt":       "输入序号：",
 		"lang_switched":     "语言切换成功",
-
 		"net_overview": "==== 当前网卡状态 ====",
 		"phys_nics":    "物理网卡列表：",
 		"no_ip":        "无IP",
 		"default_gw4":  "默认IPv4网关：",
 		"default_gw6":  "默认IPv6网关：",
-
 		"err_run_root":         "必须使用root权限运行此工具",
 		"no_network_apt":       "无法连接apt源，请先检查网络",
 		"apt_update_fail":      "apt update 更新失败",
@@ -37,7 +32,6 @@ func T(key string) string {
 		"ifup_not_found":       "未找到ifup/ifdown，缺少ifupdown",
 		"ip_unavailable":       "ip工具安装失败",
 		"ifupdown_unavailable": "ifupdown安装失败",
-
 		"detect_nics":        "正在检测物理网卡...",
 		"available_nics":     "可用网卡列表：",
 		"nics_needed":        "未检测到有效物理网卡",
@@ -51,16 +45,14 @@ func T(key string) string {
 		"invalid_select":     "选择序号无效",
 		"selected_nic":       "已选择网卡：%s",
 		"selected_bond_nics": "已选择绑定网卡：%s",
-
-		"input_ipv4":       "IPv4地址（示例192.168.1.10）",
+		"input_ipv4":       "IPv4 CIDR（格式示例：192.168.1.10/24，网关自动识别）",
+		"auto_gw_confirm":  "自动识别网关：%s，是否手动修改网关(y/n)：",
+		"input_gw":         "自定义网关地址（示例192.168.1.1）",
 		"input_netmask":    "子网掩码（支持24 / 255.255.255.0）",
-		"input_gw":         "网关地址（示例192.168.1.1）",
-		"input_gw_default": "网关地址（示例192.168.1.1）",
 		"invalid_ipv4":     "IPv4地址格式非法",
 		"invalid_netmask":  "子网掩码格式错误（支持CIDR数字或点分掩码）",
 		"invalid_gw":       "网关地址格式非法",
 		"ipv4_set":         "IPv4配置完成：地址%s 掩码%s 网关%s",
-
 		"bond_title":        "==== 网卡链路聚合配置 ====",
 		"config_ipv4_bond":  "配置Bond IPv4参数",
 		"bond_modes_title":  "Bond工作模式选择：",
@@ -78,11 +70,9 @@ func T(key string) string {
 		"gw_ping_ok":        "网关连通测试正常",
 		"gw_ping_fail":      "无法ping通网关，请检查IP/掩码配置",
 		"bond_complete":     "链路聚合配置全部完成！",
-
 		"clean_bond":          "清理旧bond残留配置",
 		"bond_removed":        "旧bond0接口已删除",
 		"bond_module_removed": "bond开机加载文件已移除",
-
 		"ipv6_config":         "是否配置IPv6地址？",
 		"config_ipv6_now":     "确认启用IPv6静态配置(y/n)：",
 		"input_ipv6_addr":     "IPv6地址（带CIDR，如2409::1/64）：",
@@ -98,7 +88,6 @@ func T(key string) string {
 		"ipv6_addr_added":     "IPv6地址 %s 已绑定至 %s",
 		"ipv6_gw_added":       "IPv6默认网关 %s 已生效",
 		"ipv6_config_updated": "网卡%s的IPv6配置已更新",
-
 		"single_title":            "===== 单网卡IP配置 =====",
 		"single_complete":         "单网卡静态IP配置完成！",
 		"detect_ipv4":             "检测网卡%s当前IPv4模式",
@@ -110,7 +99,6 @@ func T(key string) string {
 		"keep_dhcp":               "保留DHCP自动获取模式",
 		"keep_static":             "保留现有静态配置：%s %s %s",
 		"start_manual_setup":      "开始手动填写静态IP参数",
-
 		"apply_confirm":          "确认写入并应用网络配置(y/n)：",
 		"cancelled":              "已取消，返回主菜单",
 		"write_config":           "正在写入网卡配置",
@@ -125,13 +113,11 @@ func T(key string) string {
 		"nic_is_down":            "网卡%s 启动失败",
 		"restart_networking":     "是否重启全局networking服务(y/n)：",
 		"networking_restarted":   "networking服务重启完成",
-
 		"backup_config":      "配置备份文件生成：%s",
 		"backup_dns":         "原resolv.conf备份至：%s",
 		"config_dns":         "写入阿里云公共DNS",
 		"dns_via_resolvectl": "通过systemd-resolve设置DNS",
 		"dns_written":        "直接写入resolv.conf DNS配置",
-
 		"final_verify":       "==== 最终网络信息校验 ====",
 		"verify_interface":   "操作网卡：%s",
 		"verify_ipv4_mode":   "IPv4模式：%s",
@@ -141,7 +127,6 @@ func T(key string) string {
 		"verify_active_ipv6": "当前IPv6：%s",
 		"verify_gw":          "默认IPv4网关：%s",
 		"verify_dns":         "DNS服务器：%s",
-
 		"dns_test_title":     "==== DNS连通性测试 ====",
 		"test_ipv4_dns":      "测试IPv4公共DNS",
 		"test_ipv6_dns":      "测试IPv6公共DNS",
@@ -151,7 +136,6 @@ func T(key string) string {
 		"dns_test_fail":      "无法连通",
 		"dns_test_ipv6_fail": "IPv6不可达",
 		"dns_test_complete":  "全部DNS测试执行完毕",
-
 		"nic_down_enabling":    "网卡%s处于DOWN状态，正在启用链路...",
 		"nic_still_down":       "网卡%s启用后仍为DOWN状态，请检查物理网线或交换机端口",
 		"nic_link_up":          "网卡%s链路已启用",
@@ -182,7 +166,6 @@ func T(key string) string {
 		"ifenslave_install_fail":    "ifenslave 安装失败（无网环境属正常），当前配置已实时生效，重启需手动挂载从网卡",
 		"ifenslave_install_ok":      "ifenslave 安装完成，重启后从网卡将自动挂载",
 	}
-
 	en := map[string]string{
 		"menu_title":       "Debian Network Config Tool",
 		"menu_opt1":        "1. Single NIC IP Configuration",
@@ -195,20 +178,17 @@ func T(key string) string {
 		"menu_invalid":     "Invalid option, try again",
 		"menu_exit":        "Exiting tool...",
 		"press_enter_menu": "Press Enter back to main menu",
-
 		"switch_lang_title": "Language Switch",
 		"select_lang":       "Select language:",
 		"lang_en":           "1. English",
 		"lang_zh":           "2. Chinese",
 		"lang_prompt":       "Input number: ",
 		"lang_switched":     "Language changed successfully",
-
 		"net_overview": "==== Interface Status ====",
 		"phys_nics":    "Physical Interfaces:",
 		"no_ip":        "No IP",
 		"default_gw4":  "Default IPv4 GW: ",
 		"default_gw6":  "Default IPv6 GW: ",
-
 		"err_run_root":         "This tool must run as root",
 		"no_network_apt":       "Cannot reach apt repo, check network first",
 		"apt_update_fail":      "apt update failed",
@@ -217,7 +197,6 @@ func T(key string) string {
 		"ifup_not_found":       "ifup/ifdown missing, need ifupdown",
 		"ip_unavailable":       "Failed to install iproute2",
 		"ifupdown_unavailable": "Failed to install ifupdown",
-
 		"detect_nics":        "Detecting physical interfaces...",
 		"available_nics":     "Available Interfaces:",
 		"nics_needed":        "No valid physical NIC detected",
@@ -231,16 +210,14 @@ func T(key string) string {
 		"invalid_select":     "Selected index invalid",
 		"selected_nic":       "Selected interface: %s",
 		"selected_bond_nics": "Bond slave interfaces: %s",
-
-		"input_ipv4":       "IPv4 Address (example 192.168.1.10)",
+		"input_ipv4":       "IPv4 CIDR (example: 192.168.1.10/24, gateway auto-detected)",
+		"auto_gw_confirm":  "Auto detected gateway: %s, modify gateway manually?(y/n): ",
+		"input_gw":         "Custom gateway address (example 192.168.1.1)",
 		"input_netmask":    "Netmask (support CIDR 24 or dotted 255.255.255.0)",
-		"input_gw":         "Gateway (example 192.168.1.1)",
-		"input_gw_default": "Gateway (example 192.168.1.1)",
 		"invalid_ipv4":     "Invalid IPv4 format",
 		"invalid_netmask":  "Bad netmask (use CIDR number or dotted mask)",
 		"invalid_gw":       "Invalid gateway IP",
 		"ipv4_set":         "IPv4 ready: Address %s Netmask %s Gateway %s",
-
 		"bond_title":        "==== NIC Bond Link Aggregation ====",
 		"config_ipv4_bond":  "Configure IPv4 for bond0",
 		"bond_modes_title":  "Bond Mode Options:",
@@ -258,11 +235,9 @@ func T(key string) string {
 		"gw_ping_ok":        "Gateway ping test passed",
 		"gw_ping_fail":      "Cannot ping gateway, check IP/mask",
 		"bond_complete":     "Bond configuration finished!",
-
 		"clean_bond":          "Clean old bond residual config",
 		"bond_removed":        "Old bond0 interface deleted",
 		"bond_module_removed": "Bond autoload config removed",
-
 		"ipv6_config":         "Configure static IPv6 address?",
 		"config_ipv6_now":     "Enable IPv6 static config(y/n): ",
 		"input_ipv6_addr":     "IPv6 Address with CIDR(e.g.2409::1/64): ",
@@ -278,7 +253,6 @@ func T(key string) string {
 		"ipv6_addr_added":     "IPv6 address %s bound to %s",
 		"ipv6_gw_added":       "IPv6 default gateway %s applied",
 		"ipv6_config_updated": "IPv6 config updated for interface %s",
-
 		"single_title":            "===== Single NIC IP Configuration =====",
 		"single_complete":         "Single static IP setup completed!",
 		"detect_ipv4":            "Detect current IPv4 mode of %s",
@@ -290,7 +264,6 @@ func T(key string) string {
 		"keep_dhcp":              "Keep DHCP auto mode",
 		"keep_static":            "Keep existing static: %s %s %s",
 		"start_manual_setup":     "Start manual static IP setup",
-
 		"apply_confirm":          "Write & apply network config now?(y/n): ",
 		"cancelled":              "Cancelled, back to main menu",
 		"write_config":           "Writing interface config",
@@ -305,13 +278,11 @@ func T(key string) string {
 		"nic_is_down":            "Interface %s failed to bring up",
 		"restart_networking":     "Restart global networking service?(y/n): ",
 		"networking_restarted":   "networking service reloaded",
-
 		"backup_config":      "Config backup created: %s",
 		"backup_dns":         "resolv.conf backup saved to: %s",
 		"config_dns":         "Set Aliyun public DNS",
 		"dns_via_resolvectl": "DNS set via systemd-resolve",
 		"dns_written":        "DNS written directly to resolv.conf",
-
 		"final_verify":       "==== Final Network Check ====",
 		"verify_interface":   "Target Interface: %s",
 		"verify_ipv4_mode":   "IPv4 Mode: %s",
@@ -321,7 +292,6 @@ func T(key string) string {
 		"verify_active_ipv6": "Active IPv6: %s",
 		"verify_gw":          "Default IPv4 Gateway: %s",
 		"verify_dns":         "DNS Servers: %s",
-
 		"dns_test_title":     "==== DNS Connectivity Test ====",
 		"test_ipv4_dns":      "Test IPv4 Public DNS",
 		"test_ipv6_dns":      "Test IPv6 Public DNS",
@@ -331,7 +301,6 @@ func T(key string) string {
 		"dns_test_fail":      "Unreachable",
 		"dns_test_ipv6_fail": "IPv6 Unavailable",
 		"dns_test_complete":  "All DNS tests finished",
-
 		"nic_down_enabling":    "Interface %s is DOWN, bringing up link...",
 		"nic_still_down":       "Interface %s still DOWN after enabling, check cable or switch port",
 		"nic_link_up":          "Interface %s link is up",
@@ -362,7 +331,6 @@ func T(key string) string {
 		"ifenslave_install_fail":    "ifenslave install failed (normal in offline env). Config works now, slave NICs need manual mount after reboot",
 		"ifenslave_install_ok":      "ifenslave installed. Slave NICs will auto-mount on reboot",
 	}
-
 	if currentLang == "zh" {
 		return zh[key]
 	}

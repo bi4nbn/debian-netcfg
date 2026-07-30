@@ -1,5 +1,4 @@
 package main
-
 import (
 	"bufio"
 	"fmt"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"time"
 )
-
 // 颜色定义
 const (
 	RED    = "\033[0;31m"
@@ -18,13 +16,11 @@ const (
 	BLUE   = "\033[0;34m"
 	NC     = "\033[0m"
 )
-
 // 全局 DNS 配置（阿里云）
 var (
 	AliDNS4 = []string{"223.5.5.5", "223.6.6.6"}
 	AliDNS6 = []string{"2400:3200::1", "2400:3200:baba::1"}
 )
-
 // ------------------------------
 // 日志函数
 // ------------------------------
@@ -34,12 +30,10 @@ func Info(msg string)     { fmt.Printf("%s[Info]%s %s\n", BLUE, NC, msg) }
 func Success(msg string)  { fmt.Printf("%s[Success]%s %s\n", GREEN, NC, msg) }
 func Warn(msg string)     { fmt.Printf("%s[Warning]%s %s\n", YELLOW, NC, msg) }
 func Interact(msg string) { fmt.Printf("%s[Prompt]%s %s", YELLOW, NC, msg) }
-
 // ------------------------------
 // 交互输入工具
 // ------------------------------
 var reader = bufio.NewReader(os.Stdin)
-
 // ReadInput 读取用户输入，空则返回默认值
 func ReadInput(prompt string, defaultValue string) string {
 	fmt.Print(prompt)
@@ -50,7 +44,6 @@ func ReadInput(prompt string, defaultValue string) string {
 	}
 	return input
 }
-
 // ReadConfirm 读取 y/n 确认，默认值可选
 func ReadConfirm(prompt string, defaultYes bool) bool {
 	defStr := "y"
@@ -60,51 +53,66 @@ func ReadConfirm(prompt string, defaultYes bool) bool {
 	input := ReadInput(prompt, defStr)
 	return strings.ToLower(input) == "y"
 }
-
-// PromptIPv4Config 统一IPv4地址/掩码/网关交互输入，全局复用同一套校验逻辑
+// PromptIPv4Config 统一IPv4 CIDR输入，自动换算掩码、自动识别网关，支持手动修改
 func PromptIPv4Config(defaultIP, defaultMask, defaultGW string) (ip, mask, gw string) {
-	// IPv4 地址输入
-	for {
-		inputIP := ReadInput(T("input_ipv4"), defaultIP)
-		if inputIP == "" {
-			inputIP = defaultIP
-		}
-		if ValidateIPv4(inputIP) {
-			ip = inputIP
-			break
-		}
-		Error(T("invalid_ipv4"))
-	}
-
-	// 子网掩码输入
-	for {
-		inputMask := ReadInput(T("input_netmask"), defaultMask)
-		if inputMask == "" {
-			inputMask = defaultMask
-		}
-		parsedMask, err := ParseNetmask(inputMask)
+	// 回填旧配置为CIDR格式
+	defaultCIDR := ""
+	if defaultIP != "" && defaultMask != "" {
+		cidrNum, err := NetmaskToCIDR(defaultMask)
 		if err == nil {
-			mask = parsedMask
-			break
+			defaultCIDR = fmt.Sprintf("%s/%d", defaultIP, cidrNum)
 		}
-		Error(T("invalid_netmask"))
 	}
 
-	// 网关地址输入
-	autoGW := defaultGW
-	if autoGW == "" {
-		autoGW = GetDefaultGateway()
-	}
+	// 1. 仅输入CIDR，循环校验格式
+	var inputCIDR string
 	for {
-		inputGW := ReadInput(T("input_gw"), autoGW)
-		if inputGW == "" {
-			inputGW = autoGW
+		inputCIDR = ReadInput(T("input_ipv4"), defaultCIDR)
+		if inputCIDR == "" {
+			inputCIDR = defaultCIDR
 		}
-		if ValidateIPv4(inputGW) {
-			gw = inputGW
-			break
+		_, _, err := net.ParseCIDR(inputCIDR)
+		if err != nil {
+			Error(T("invalid_ipv4"))
+			continue
 		}
-		Error(T("invalid_gw"))
+		break
+	}
+
+	// 拆分IP、自动换算掩码
+	parts := strings.Split(inputCIDR, "/")
+	ip = parts[0]
+	var prefix int
+	fmt.Sscanf(parts[1], "%d", &prefix)
+	mask = CIDRToNetmask(prefix)
+
+	// 2. 自动获取网关
+	autoGW, err := GetAutoGatewayFromCIDR(inputCIDR)
+	if err == nil && ValidateIPv4(autoGW) {
+		gw = autoGW
+	} else {
+		// 推算失败，使用系统现有默认网关兜底
+		gw = GetDefaultGateway()
+	}
+	// 兜底防止网关为空字符串写入配置
+	if gw == "" {
+		gw = "0.0.0.0"
+	}
+
+	// 3. 询问是否手动修改网关
+	if ReadConfirm(fmt.Sprintf(T("auto_gw_confirm"), gw), false) {
+		// 用户选择手动修改，进入网关输入循环
+		for {
+			inputGW := ReadInput(T("input_gw"), gw)
+			if inputGW == "" {
+				inputGW = gw
+			}
+			if ValidateIPv4(inputGW) {
+				gw = inputGW
+				break
+			}
+			Error(T("invalid_gw"))
+		}
 	}
 
 	Info(fmt.Sprintf(T("ipv4_set"), ip, mask, gw))
@@ -130,7 +138,6 @@ func PromptIPv6Config() (addr, gw string) {
 	Info(fmt.Sprintf(T("ipv6_set"), addr, gw))
 	return
 }
-
 // ------------------------------
 // 系统工具
 // ------------------------------
@@ -140,20 +147,17 @@ func CheckRoot() {
 		Fatal(T("err_run_root"))
 	}
 }
-
 // CommandExists 检查命令是否存在
 func CommandExists(cmd string) bool {
 	_, err := exec.LookPath(cmd)
 	return err == nil
 }
-
 // RunCmd 执行命令，返回输出和错误
 func RunCmd(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
-
 // RunCmdSilent 静默执行命令，失败返回错误
 func RunCmdSilent(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
@@ -161,7 +165,6 @@ func RunCmdSilent(name string, args ...string) error {
 	cmd.Stderr = nil
 	return cmd.Run()
 }
-
 // CheckAptNetwork 检查 apt 源网络连通性
 func CheckAptNetwork() {
 	err1 := RunCmdSilent("ping", "-c", "1", "-W", "2", "deb.debian.org")
@@ -170,7 +173,6 @@ func CheckAptNetwork() {
 		Fatal(T("no_network_apt"))
 	}
 }
-
 // InstallBaseDeps 安装基础依赖
 func InstallBaseDeps() {
 	var needInstall []string
@@ -198,7 +200,6 @@ func InstallBaseDeps() {
 		Fatal(T("ifupdown_unavailable"))
 	}
 }
-
 // DisableConflictServices 禁用冲突的网络服务
 func DisableConflictServices() {
 	if RunCmdSilent("systemctl", "is-active", "--quiet", "NetworkManager") == nil {
@@ -210,12 +211,10 @@ func DisableConflictServices() {
 		_ = RunCmdSilent("systemctl", "disable", "systemd-networkd")
 	}
 }
-
 // Sleep 延时等待
 func Sleep(seconds int) {
 	time.Sleep(time.Duration(seconds) * time.Second)
 }
-
 // GetCurrentSSHLocalIP 获取当前SSH会话的本机服务端IP
 func GetCurrentSSHLocalIP() string {
 	conn := os.Getenv("SSH_CONNECTION")
@@ -228,7 +227,6 @@ func GetCurrentSSHLocalIP() string {
 	}
 	return ""
 }
-
 // GetCurrentSSHPeerIP 获取当前SSH会话的客户端IP，用于路由保护
 func GetCurrentSSHPeerIP() string {
 	conn := os.Getenv("SSH_CONNECTION")
@@ -241,7 +239,6 @@ func GetCurrentSSHPeerIP() string {
 	}
 	return ""
 }
-
 // GetRouteDevForIP 查询指定IP走哪个网卡出口
 func GetRouteDevForIP(ip string) string {
 	if ip == "" {
@@ -259,17 +256,49 @@ func GetRouteDevForIP(ip string) string {
 	}
 	return ""
 }
-
 // ------------------------------
 // IP 工具函数
 // ------------------------------
 // CIDRToNetmask CIDR 转点分十进制子网掩码
 func CIDRToNetmask(cidr int) string {
 	if cidr < 0 || cidr > 32 {
-		return "255.255.255.0"
+		return "255.255.0.0"
 	}
 	mask := net.CIDRMask(cidr, 32)
 	return net.IP(mask).String()
+}
+
+// NetmaskToCIDR 点分十进制掩码转CIDR前缀长度
+func NetmaskToCIDR(maskStr string) (int, error) {
+	ip := net.ParseIP(maskStr).To4()
+	if ip == nil {
+		return 0, fmt.Errorf("invalid netmask")
+	}
+	mask := net.IPMask(ip)
+	ones, bits := mask.Size()
+	if bits != 32 {
+		return 0, fmt.Errorf("not ipv4 mask")
+	}
+	return ones, nil
+}
+
+// GetAutoGatewayFromCIDR 根据CIDR算出网段网络地址，网络地址+1作为自动网关
+func GetAutoGatewayFromCIDR(cidrStr string) (string, error) {
+	// 标准解析：ipNet.IP 是完整网段网络地址
+	_, ipNet, err := net.ParseCIDR(cidrStr)
+	if err != nil {
+		return "", err
+	}
+	ip4 := ipNet.IP.To4()
+	if ip4 == nil {
+		return "", fmt.Errorf("only support ipv4 cidr")
+	}
+	// 复制网络地址，避免修改原切片
+	gatewayIP := make(net.IP, 4)
+	copy(gatewayIP, ip4)
+	// 网络地址 +1 得到网段第一个可用主机地址（标准网关位置）
+	gatewayIP[3] += 1
+	return gatewayIP.String(), nil
 }
 
 // ValidateIPv4 校验 IPv4 地址格式
@@ -277,7 +306,6 @@ func ValidateIPv4(ip string) bool {
 	parsed := net.ParseIP(ip)
 	return parsed != nil && parsed.To4() != nil
 }
-
 // ValidateNetmask 校验子网掩码合法性
 func ValidateNetmask(mask string) bool {
 	if !ValidateIPv4(mask) {
@@ -287,7 +315,6 @@ func ValidateNetmask(mask string) bool {
 	ones, bits := ipMask.Size()
 	return bits == 32 && ones >= 0 && ones <= 32
 }
-
 // ParseNetmask 解析子网掩码，兼容点分格式(255.255.255.0)和CIDR前缀格式(24)
 func ParseNetmask(input string) (string, error) {
 	// 包含点则按点分十进制掩码处理
@@ -321,7 +348,6 @@ func ParseNetmask(input string) (string, error) {
 	mask := net.CIDRMask(prefix, 32)
 	return net.IP(mask).String(), nil
 }
-
 // ValidateIPv6CIDR 严格校验 IPv6 CIDR 格式
 func ValidateIPv6CIDR(addr string) bool {
 	ip, _, err := net.ParseCIDR(addr)
@@ -330,13 +356,11 @@ func ValidateIPv6CIDR(addr string) bool {
 	}
 	return ip.To4() == nil // 确保是 IPv6
 }
-
 // ValidateIPv6 校验 IPv6 地址格式
 func ValidateIPv6(ip string) bool {
 	parsed := net.ParseIP(ip)
 	return parsed != nil && parsed.To4() == nil
 }
-
 // GetDefaultGateway 获取系统默认 IPv4 网关
 func GetDefaultGateway() string {
 	out, err := RunCmd("ip", "route", "show", "default")
@@ -351,7 +375,6 @@ func GetDefaultGateway() string {
 	}
 	return ""
 }
-
 // IsDHCPClient 检查指定IP是否来自DHCP租约
 func IsDHCPClient(ip string) bool {
 	if ip == "" {
@@ -367,7 +390,6 @@ func IsDHCPClient(ip string) bool {
 	}
 	return strings.Contains(string(data), ip)
 }
-
 // ------------------------------
 // 文件工具
 // ------------------------------
