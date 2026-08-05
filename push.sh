@@ -6,7 +6,13 @@ git status
 
 echo -e "\n========== 全部加入暂存区 =========="
 git add .
+# 取消暂存 ftp.sh，避免被提交
+git reset -- ftp.sh   # 替换为你实际的脚本文件名
 
+# 检查是否还有未暂存的文件（可选）
+if git status --porcelain | grep -q "ftp.sh"; then
+    echo "ftp.sh 仍未被忽略，已从暂存区移除。"
+fi
 read -p "请输入本次提交备注: " commitMsg
 if [ -z "$commitMsg" ]; then
     commitMsg="日常更新"
