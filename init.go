@@ -204,4 +204,6 @@ func RunInitScript() {
 	}
 
 	Success("System initialization completed successfully")
+	// 写入持久化标记文件
+	markInitialized()
 }

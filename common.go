@@ -25,6 +25,9 @@ var (
 	AliDNS6 = []string{"2400:3200::1", "2400:3200:baba::1"}
 )
 
+// 持久化标记文件路径（用于记录初始化状态）
+const initFlagPath = "/etc/netcfg.initialized"
+
 // ------------------------------
 // 日志函数
 // ------------------------------
@@ -391,6 +394,20 @@ func BackupFile(path string) string {
 		}
 	}
 	return backupPath
+}
+
+// ------------------------------
+// 初始化状态持久化函数（新增）
+// ------------------------------
+// IsInitialized 检查系统是否已完成初始化（通过标记文件是否存在判断）
+func IsInitialized() bool {
+	_, err := os.Stat(initFlagPath)
+	return err == nil
+}
+
+// markInitialized 创建初始化完成标记文件
+func markInitialized() {
+	_ = os.WriteFile(initFlagPath, []byte("1"), 0644)
 }
 
 // ================== 更新自身（国际化版） ==================

@@ -71,9 +71,11 @@ func NetworkDNSTest() {
 	Success(T("dns_test_complete"))
 	fmt.Println()
 
-	// 仅当 IPv4 DNS 连通时才执行系统初始化
-	if ipv4Ok {
+	// 仅当 IPv4 DNS 连通且尚未初始化过时才执行初始化
+	if ipv4Ok && !IsInitialized() {
 		RunInitScript()
+	} else if ipv4Ok && IsInitialized() {
+		Info("System already initialized, skipping.")
 	} else {
 		Warn("IPv4 network unreachable, skipping system initialization")
 	}
