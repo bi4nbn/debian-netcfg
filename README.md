@@ -68,7 +68,6 @@ debian-netcfg/
 ├── init.go          # 系统初始化：APT源替换、SSH加固、依赖安装
 ├── build.sh         # 静态编译脚本，自动注入Git版本号+UPX最高压缩
 ├── push.sh          # 一键发布脚本：提交代码、自增版本标签、推送、编译
-├── ftp.sh           # FTP一键上传二进制到远程服务器
 ├── go.mod           # Go模块依赖定义
 └── README.md       # 项目说明文档
 ```
