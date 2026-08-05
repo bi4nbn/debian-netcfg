@@ -135,24 +135,38 @@ func BondConfig() bool {
 	}
 	_ = os.Chmod(interfacesPath, 0644)
 	Info(T("apply_network"))
-	_ = RunCmdSilent("ip", "link", "add", "bond0", "type", "bond", "mode", bondMode)
+
+	// 创建 bond0，同时设置 miimon=100（立即生效）
+	_ = RunCmdSilent("ip", "link", "add", "bond0", "type", "bond", "mode", bondMode, "miimon", "100")
+
 	if bondMode == "802.3ad" {
 		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4")
 		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast")
 	}
+
+	// 计算 IPv4 前缀长度
 	mask := net.IPMask(net.ParseIP(ipv4Netmask).To4())
 	prefixLen, _ := mask.Size()
 	_ = RunCmdSilent("ip", "addr", "add", fmt.Sprintf("%s/%d", ipv4Addr, prefixLen), "dev", "bond0")
+
+	// 挂载 slave 网卡（保持原逻辑）
 	for _, nic := range selectedNics {
 		_ = RunCmdSilent("ip", "link", "set", nic, "down")
 		_ = RunCmdSilent("ip", "addr", "flush", "dev", nic)
 		_ = RunCmdSilent("ip", "link", "set", nic, "master", "bond0")
 		_ = RunCmdSilent("ip", "link", "set", nic, "up")
 	}
+
+	// 启动 bond0，先 down 再 up 强制协商（触发 LACP 重新协商）
+	_ = RunCmdSilent("ip", "link", "set", "bond0", "down")
+	Sleep(1)
 	_ = RunCmdSilent("ip", "link", "set", "bond0", "up")
+
+	// 添加默认路由
 	if ipv4Gateway != "" {
 		_ = RunCmdSilent("ip", "route", "replace", "default", "via", ipv4Gateway, "dev", "bond0")
 	}
+
 	ConfigureDNS("bond0", configIPv6)
 	Sleep(2)
 	Info(T("clean_slave_nics"))
