@@ -1,6 +1,16 @@
 #!/bin/bash
 # 最小体积编译+自动UPX压缩
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o netcfg
+
+# 获取版本号：优先取最近的 git tag，否则使用 commit 短哈希
+if git describe --tags --always --dirty > /dev/null 2>&1; then
+    VERSION=$(git describe --tags --always --dirty)
+else
+    VERSION="dev"
+fi
+
+echo "当前版本号: $VERSION"
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=$VERSION" -o netcfg
 
 if ! command -v upx &> /dev/null
 then

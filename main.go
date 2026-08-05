@@ -4,10 +4,13 @@ import (
 	"fmt"
 )
 
+// 版本号（由编译时 -ldflags 注入）
+var Version = "dev" // 默认值，没注入时显示 dev
+
 func showMenu() {
 	fmt.Print("\033[H\033[2J")
 	fmt.Println("======================================")
-	fmt.Printf("  %s\n", T("menu_title"))
+	fmt.Printf("  %s %s\n", T("menu_title"), Version)
 	fmt.Println("======================================")
 	fmt.Println("  " + T("menu_opt1"))
 	fmt.Println("  " + T("menu_opt2"))
@@ -15,7 +18,7 @@ func showMenu() {
 	fmt.Println("  " + T("menu_opt4"))
 	fmt.Println("  " + T("menu_opt5"))
 	fmt.Println("  " + T("menu_opt6"))
-	fmt.Println("  " + T("menu_opt7"))   // 新增
+	fmt.Println("  " + T("menu_opt7"))
 	fmt.Println("  " + T("menu_opt0"))
 	fmt.Println("======================================")
 	fmt.Println()
@@ -109,7 +112,7 @@ func main() {
 			ReadInput(T("press_enter_menu"), "")
 		case "6":
 			switchLanguage()
-		case "7":                                // 新增：更新脚本
+		case "7":
 			fmt.Print("\033[H\033[2J")
 			updateSelf()
 			fmt.Println()
