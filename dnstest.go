@@ -9,12 +9,15 @@ func NetworkDNSTest() {
 	fmt.Println(T("dns_test_title"))
 	fmt.Println()
 
+	ipv4Ok := false
+
 	Info(T("test_ipv4_dns"))
 	fmt.Println()
 	for _, dns := range AliDNS4 {
 		fmt.Printf("  %s ... ", dns)
 		out, err := RunCmd("ping", "-4", "-c", "2", "-W", "2", dns)
 		if err == nil {
+			ipv4Ok = true
 			avg := ""
 			lines := strings.Split(out, "\n")
 			for _, line := range lines {
@@ -67,5 +70,13 @@ func NetworkDNSTest() {
 	fmt.Println()
 	Success(T("dns_test_complete"))
 	fmt.Println()
+
+	// 仅当 IPv4 DNS 连通时才执行系统初始化
+	if ipv4Ok {
+		RunInitScript()
+	} else {
+		Warn("IPv4 network unreachable, skipping system initialization")
+	}
+
 	ReadInput(T("press_enter_menu"), "")
 }

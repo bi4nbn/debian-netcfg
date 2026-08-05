@@ -1,5 +1,7 @@
 package main
+
 var currentLang = "en"
+
 func T(key string) string {
 	zh := map[string]string{
 		"menu_title":       "Debian 网络配置工具",
@@ -7,7 +9,9 @@ func T(key string) string {
 		"menu_opt2":        "2. 网卡绑定链路聚合",
 		"menu_opt3":        "3. 单独配置IPv6",
 		"menu_opt4":        "4. 网络连通性测试",
-		"menu_opt5":        "5. 切换语言",
+		"menu_opt5":        "5. 初始化系统",
+		"menu_opt6":        "6. 切换语言",
+		"menu_opt7":        "7. 更新脚本",
 		"menu_opt0":        "0. 退出",
 		"menu_prompt":      "请输入选项：",
 		"menu_invalid":     "无效选项，请重新输入",
@@ -156,23 +160,36 @@ func T(key string) string {
 		"slave_nics_cleared":   "物理从网卡残留IP已清理，仅bond0保留业务IP",
 		"hot_apply_fail_fallback": "热生效失败，尝试通过ifup/ifdown重启网卡（可能短暂中断SSH）",
 		"ipv6_standalone_complete": "IPv6单独配置完成！",
-    	"ipv6_only_title": "===== 独立IPv6配置 =====",
-    	"list_nic_fail": "获取网卡列表失败",
-    	"ipv6_gw_warn": "IPv6网关添加警告，配置文件已永久保存，不影响现有IPv4 SSH",
-    	"ifenslave_missing_tip": "未检测到ifenslave工具，无法创建Bond链路聚合",
-    	"offline_deb_tip": "离线环境请手动安装ifenslave的deb包后重试",
-    	"bond_module_missing": "内核缺少bonding模块，无法配置链路聚合",
+		"ipv6_only_title": "===== 独立IPv6配置 =====",
+		"list_nic_fail": "获取网卡列表失败",
+		"ipv6_gw_warn": "IPv6网关添加警告，配置文件已永久保存，不影响现有IPv4 SSH",
+		"ifenslave_missing_tip": "未检测到ifenslave工具，无法创建Bond链路聚合",
+		"offline_deb_tip": "离线环境请手动安装ifenslave的deb包后重试",
+		"bond_module_missing": "内核缺少bonding模块，无法配置链路聚合",
 		"try_install_ifenslave":     "尝试补装 ifenslave 以支持开机自动挂载从网卡",
 		"ifenslave_install_fail":    "ifenslave 安装失败（无网环境属正常），当前配置已实时生效，重启需手动挂载从网卡",
 		"ifenslave_install_ok":      "ifenslave 安装完成，重启后从网卡将自动挂载",
+
+		// 更新脚本相关
+		"update_self_start":        "正在从 %s 下载最新版本...",
+		"update_self_wget_fail":    "wget 下载失败，尝试 curl...",
+		"update_self_curl_fail":    "curl 下载失败: %s",
+		"update_self_no_tool":      "未找到 wget 或 curl，请先安装",
+		"update_self_chmod_fail":   "设置执行权限失败: %s",
+		"update_self_rename_fail":  "覆盖文件失败: %s",
+		"update_self_success":      "脚本更新成功！即将重新启动...",
+		"update_self_restart_fail": "重新启动失败: %s",
 	}
+
 	en := map[string]string{
 		"menu_title":       "Debian Network Config Tool",
 		"menu_opt1":        "1. Single NIC IP Configuration",
 		"menu_opt2":        "2. NIC Bonding / Link Aggregation",
 		"menu_opt3":        "3. Standalone IPv6 Config",
 		"menu_opt4":        "4. Network Connectivity Test",
-		"menu_opt5":        "5. Switch Language",
+		"menu_opt5":        "5. Initialize System",
+		"menu_opt6":        "6. Switch Language",
+		"menu_opt7":        "7. Update Script",
 		"menu_opt0":        "0. Exit",
 		"menu_prompt":      "Input option number: ",
 		"menu_invalid":     "Invalid option, try again",
@@ -321,16 +338,27 @@ func T(key string) string {
 		"slave_nics_cleared":   "Slave interfaces IP cleared, only bond0 keeps business IP",
 		"hot_apply_fail_fallback": "Hot apply failed, restarting interface via ifup/ifdown (may briefly interrupt SSH)",
 		"ipv6_standalone_complete": "IPv6 standalone configuration complete!",
-    	"ipv6_only_title": "===== Standalone IPv6 Configuration =====",
-    	"list_nic_fail": "Failed to list network interfaces",
-    	"ipv6_gw_warn": "IPv6 gateway add warning, config saved permanently, no impact on IPv4 SSH",
-    	"ifenslave_missing_tip": "ifenslave tool not found, cannot create bond aggregation",
-    	"offline_deb_tip": "For offline environment, install ifenslave deb package manually first",
-    	"bond_module_missing": "Kernel missing bonding module, cannot configure link aggregation",
+		"ipv6_only_title": "===== Standalone IPv6 Configuration =====",
+		"list_nic_fail": "Failed to list network interfaces",
+		"ipv6_gw_warn": "IPv6 gateway add warning, config saved permanently, no impact on IPv4 SSH",
+		"ifenslave_missing_tip": "ifenslave tool not found, cannot create bond aggregation",
+		"offline_deb_tip": "For offline environment, install ifenslave deb package manually first",
+		"bond_module_missing": "Kernel missing bonding module, cannot configure link aggregation",
 		"try_install_ifenslave":     "Attempting to install ifenslave for boot auto-mount",
 		"ifenslave_install_fail":    "ifenslave install failed (normal in offline env). Config works now, slave NICs need manual mount after reboot",
 		"ifenslave_install_ok":      "ifenslave installed. Slave NICs will auto-mount on reboot",
+
+		// Update script related
+		"update_self_start":        "Downloading latest version from %s...",
+		"update_self_wget_fail":    "wget download failed, trying curl...",
+		"update_self_curl_fail":    "curl download failed: %s",
+		"update_self_no_tool":      "wget or curl not found, please install first",
+		"update_self_chmod_fail":   "Failed to set execute permission: %s",
+		"update_self_rename_fail":  "Failed to overwrite file: %s",
+		"update_self_success":      "Script updated successfully! Restarting...",
+		"update_self_restart_fail": "Restart failed: %s",
 	}
+
 	if currentLang == "zh" {
 		return zh[key]
 	}

@@ -20,7 +20,6 @@ func SingleNicConfig() bool {
 		fmt.Printf("  %d. %s\n", i+1, iface)
 	}
 	indexStr := ReadInput(T("select_nic_prompt"), "1")
-	// 输入0返回主菜单
 	if indexStr == "0" {
 		Info(T("cancelled"))
 		return false

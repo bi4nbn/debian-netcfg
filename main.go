@@ -5,7 +5,7 @@ import (
 )
 
 func showMenu() {
-	fmt.Print("\033[H\033[2J") // 清屏
+	fmt.Print("\033[H\033[2J")
 	fmt.Println("======================================")
 	fmt.Printf("  %s\n", T("menu_title"))
 	fmt.Println("======================================")
@@ -14,10 +14,12 @@ func showMenu() {
 	fmt.Println("  " + T("menu_opt3"))
 	fmt.Println("  " + T("menu_opt4"))
 	fmt.Println("  " + T("menu_opt5"))
+	fmt.Println("  " + T("menu_opt6"))
+	fmt.Println("  " + T("menu_opt7"))   // 新增
 	fmt.Println("  " + T("menu_opt0"))
 	fmt.Println("======================================")
 	fmt.Println()
-	// 当前网络概览
+
 	fmt.Printf("%s%s%s\n", BLUE, T("net_overview"), NC)
 	physNics := ListPhysicalInterfaces()
 	if len(physNics) > 0 {
@@ -36,7 +38,6 @@ func showMenu() {
 			fmt.Printf("  %s%-4s%s %-10s IPv4: %-18s IPv6: %s\n", statusColor, status, NC, nic, ip4, ip6)
 		}
 	}
-	// Bond0 状态
 	if RunCmdSilent("ip", "link", "show", "bond0") == nil {
 		status := GetInterfaceStatus("bond0")
 		statusColor := RED
@@ -102,7 +103,17 @@ func main() {
 			fmt.Print("\033[H\033[2J")
 			NetworkDNSTest()
 		case "5":
+			fmt.Print("\033[H\033[2J")
+			RunInitScript()
+			fmt.Println()
+			ReadInput(T("press_enter_menu"), "")
+		case "6":
 			switchLanguage()
+		case "7":                                // 新增：更新脚本
+			fmt.Print("\033[H\033[2J")
+			updateSelf()
+			fmt.Println()
+			ReadInput(T("press_enter_menu"), "")
 		case "0":
 			Info(T("menu_exit"))
 			return

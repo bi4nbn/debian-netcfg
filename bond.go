@@ -1,16 +1,17 @@
 package main
+
 import (
 	"fmt"
 	"net"
 	"os"
 	"strings"
 )
+
 func BondConfig() bool {
 	fmt.Println(T("bond_title"))
 	fmt.Println()
 	CheckRoot()
 	DisableConflictServices()
-	// 唯一必需前置依赖：内核 bonding 模块
 	if RunCmdSilent("modprobe", "-n", "bonding") != nil {
 		Fatal(T("bond_module_missing"))
 	}
@@ -63,7 +64,6 @@ func BondConfig() bool {
 		break
 	}
 	Success(fmt.Sprintf(T("selected_bond_nics"), strings.Join(selectedNics, " ")))
-	// 读取现有配置默认值
 	var currentIP, currentMask, currentGW string
 	if RunCmdSilent("ip", "link", "show", "bond0") == nil {
 		_, _, currentIP, currentMask, currentGW = DetectInterfaceIPMode("bond0")
@@ -88,7 +88,6 @@ func BondConfig() bool {
 	fmt.Println(T("bond_mode1"))
 	fmt.Println(T("bond_mode2"))
 	fmt.Println(T("bond_mode3"))
-	// 修改1：默认值改为3，回车直接选802.3ad
 	modeInput := ReadInput(T("select_bond_mode"), "3")
 	if modeInput == "0" {
 		Info(T("cancelled"))
@@ -104,7 +103,6 @@ func BondConfig() bool {
 		bondMode = "balance-rr"
 	}
 	Success(fmt.Sprintf(T("bond_mode_set"), bondMode))
-	// IPv6 配置
 	configIPv6 := false
 	var ipv6Addr, ipv6Gateway string
 	fmt.Println()
@@ -115,23 +113,18 @@ func BondConfig() bool {
 	} else {
 		Info(T("ipv6_skipped"))
 	}
-	// 加载 bonding 内核模块
 	if _, err := os.Stat("/proc/net/bonding"); os.IsNotExist(err) {
 		err := RunCmdSilent("modprobe", "bonding")
 		if err != nil {
 			Fatal(T("bond_module_fail"))
 		}
 	}
-	// 写入开机模块加载配置
 	_ = os.MkdirAll("/etc/modules-load.d", 0755)
 	_ = os.WriteFile(bondModulePath, []byte("bonding\n"), 0644)
 	_ = RunCmdSilent("systemctl", "enable", "systemd-modules-load.service")
 	_ = RunCmdSilent("systemctl", "enable", "networking.service")
-	// 清理旧 bond 残留
 	CleanBondResidual()
-	// 备份配置
 	BackupFile(interfacesPath)
-	// 写入永久配置文件（标准格式，兼容 ifenslave 环境）
 	Info(T("write_bond_config"))
 	err := WriteBondConfig(selectedNics, ipv4Addr, ipv4Netmask, ipv4Gateway, bondMode, configIPv6, ipv6Addr, ipv6Gateway)
 	if err != nil {
@@ -141,47 +134,33 @@ func BondConfig() bool {
 		return false
 	}
 	_ = os.Chmod(interfacesPath, 0644)
-	// 实时生效：统一用 ip 命令，不依赖 ifenslave，保证无网也能配置成功
 	Info(T("apply_network"))
-	// 1. 创建 bond0 接口并设置模式
 	_ = RunCmdSilent("ip", "link", "add", "bond0", "type", "bond", "mode", bondMode)
-
-	// 修改2+3：802.3ad 实时下发 layer3+4 哈希 + lacp_rate fast
 	if bondMode == "802.3ad" {
-		// 哈希策略
 		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4")
-		// LACP快速协商
 		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast")
 	}
-
-	// 2. 配置 IPv4 地址
 	mask := net.IPMask(net.ParseIP(ipv4Netmask).To4())
 	prefixLen, _ := mask.Size()
 	_ = RunCmdSilent("ip", "addr", "add", fmt.Sprintf("%s/%d", ipv4Addr, prefixLen), "dev", "bond0")
-	// 3. 物理网卡加入 bond
 	for _, nic := range selectedNics {
 		_ = RunCmdSilent("ip", "link", "set", nic, "down")
 		_ = RunCmdSilent("ip", "addr", "flush", "dev", nic)
 		_ = RunCmdSilent("ip", "link", "set", nic, "master", "bond0")
 		_ = RunCmdSilent("ip", "link", "set", nic, "up")
 	}
-	// 4. 启动 bond0
 	_ = RunCmdSilent("ip", "link", "set", "bond0", "up")
-	// 5. 设置默认网关
 	if ipv4Gateway != "" {
 		_ = RunCmdSilent("ip", "route", "replace", "default", "via", ipv4Gateway, "dev", "bond0")
 	}
-	// 配置 DNS
 	ConfigureDNS("bond0", configIPv6)
 	Sleep(2)
-	// 清理从网卡残留 IP
 	Info(T("clean_slave_nics"))
 	for _, nic := range selectedNics {
 		_ = RunCmdSilent("ip", "-4", "addr", "flush", "dev", nic)
 		_ = RunCmdSilent("ip", "-6", "addr", "flush", "dev", nic, "scope", "global")
 	}
 	Success(T("slave_nics_cleared"))
-	// 最终校验
 	fmt.Println()
 	Info(T("final_verify"))
 	if out, err := RunCmd("ip", "link", "show", "bond0"); err == nil && strings.Contains(out, "state UP") {
@@ -204,7 +183,6 @@ func BondConfig() bool {
 	} else {
 		Warn(T("gw_ping_fail"))
 	}
-	// 后置静默安装 ifenslave
 	if !CommandExists("ifenslave") {
 		Info(T("try_install_ifenslave"))
 		installErr := RunCmdSilent("apt", "install", "-y", "-qq", "ifenslave")
