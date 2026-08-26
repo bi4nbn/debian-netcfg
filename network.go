@@ -199,6 +199,28 @@ func ApplyIPv4Online(iface string, newIP, newMask, newGW string, oldIP string) e
 	prefixLen, _ := mask.Size()
 	newCIDR := fmt.Sprintf("%s/%d", newIP, prefixLen)
 
+	// 检测并清除所有接口上的相同 IP（防止 IP 冲突）
+	newIPOnly := newIP
+	allOut, _ := RunCmd("ip", "-4", "addr", "show")
+	if strings.Contains(allOut, newIPOnly+"/") {
+		Info(fmt.Sprintf(T("ip_conflict_detected"), newIPOnly))
+		lines := strings.Split(allOut, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "inet "+newIPOnly+"/") {
+				parts := strings.Fields(line)
+				for i, f := range parts {
+					if f == "dev" && i+1 < len(parts) {
+						conflictIface := parts[i+1]
+						if conflictIface != iface {
+							Info(fmt.Sprintf(T("ip_conflict_cleaning"), conflictIface, newIPOnly))
+							_ = RunCmdSilent("ip", "addr", "del", newCIDR, "dev", conflictIface)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	sshPeerIP := GetCurrentSSHPeerIP()
 	oldGW := GetDefaultGateway()
 	sshDev := GetRouteDevForIP(sshPeerIP)

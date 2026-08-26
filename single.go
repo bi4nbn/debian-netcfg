@@ -77,6 +77,43 @@ func SingleNicConfig() bool {
 		Info(T("cancelled"))
 		return false
 	}
+
+	// ========== 关键修复：在配置新 IP 之前清理 bond0 ==========
+	// 这是解决从 bond 切换到单网卡时 IP 冲突的核心修复
+	if RunCmdSilent("ip", "link", "show", "bond0") == nil {
+		Info(T("bond0_residual_clean"))
+
+		// 1. 先添加 SSH 回程路由保护（避免清理 bond0 时断开 SSH）
+		sshPeerIP := GetCurrentSSHPeerIP()
+		sshDev := GetRouteDevForIP(sshPeerIP)
+		oldGW := GetDefaultGateway()
+
+		if sshPeerIP != "" && sshDev != "" {
+			Info(T("ssh_route_protection"))
+			_ = RunCmdSilent("ip", "route", "add", sshPeerIP+"/32", "via", oldGW, "dev", sshDev)
+		}
+
+		// 2. 检查 SSH 是否通过 bond0 连接
+		if sshDev == "bond0" {
+			Warn(T("bond0_ssh_skip"))
+			Warn(T("bond0_manual_tip"))
+			// 即使 SSH 通过 bond0，也要清理 bond0 的 IP，避免 IP 冲突
+			// 但不删除 bond0 接口本身，保持 SSH 连接
+			_ = RunCmdSilent("ip", "-4", "addr", "flush", "dev", "bond0")
+			_ = RunCmdSilent("ip", "-6", "addr", "flush", "dev", "bond0")
+			Info(T("bond0_ip_flushed"))
+		} else {
+			// SSH 不通过 bond0，可以安全删除 bond0
+			_ = RunCmdSilent("ip", "-4", "addr", "flush", "dev", "bond0")
+			_ = RunCmdSilent("ip", "-6", "addr", "flush", "dev", "bond0")
+			CleanBondResidual()
+			Success(T("bond0_cleaned"))
+		}
+	}
+
+	// 清理其他物理网卡的残留 IP（在配置新 IP 之前）
+	CleanOtherInterfaces(defaultIface)
+
 	BackupFile(interfacesPath)
 	Info(T("write_config"))
 	err := WriteSingleConfig(defaultIface, useStatic, ipv4Addr, ipv4Netmask, ipv4Gateway, configIPv6, ipv6Addr, ipv6Gateway)
@@ -114,21 +151,6 @@ func SingleNicConfig() bool {
 			Success(T("networking_restarted"))
 		}
 	}
-	if RunCmdSilent("ip", "link", "show", "bond0") == nil {
-		sshPeerIP := GetCurrentSSHPeerIP()
-		sshDev := GetRouteDevForIP(sshPeerIP)
-		if sshPeerIP == "" || sshDev != "bond0" {
-			Info(T("bond0_residual_clean"))
-			_ = RunCmdSilent("ip", "-4", "addr", "flush", "dev", "bond0")
-			_ = RunCmdSilent("ip", "-6", "addr", "flush", "dev", "bond0")
-			CleanBondResidual()
-			Success(T("bond0_cleaned"))
-		} else {
-			Warn(T("bond0_ssh_skip"))
-			Warn(T("bond0_manual_tip"))
-		}
-	}
-	CleanOtherInterfaces(defaultIface)
 	fmt.Println()
 	Info(T("final_verify"))
 	fmt.Printf(T("verify_interface")+"\n", defaultIface)

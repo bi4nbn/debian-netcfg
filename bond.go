@@ -139,11 +139,6 @@ func BondConfig() bool {
 	// 创建 bond0，同时设置 miimon=100（立即生效）
 	_ = RunCmdSilent("ip", "link", "add", "bond0", "type", "bond", "mode", bondMode, "miimon", "100")
 
-	if bondMode == "802.3ad" {
-		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4")
-		_ = RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast")
-	}
-
 	// 计算 IPv4 前缀长度
 	mask := net.IPMask(net.ParseIP(ipv4Netmask).To4())
 	prefixLen, _ := mask.Size()
@@ -161,6 +156,18 @@ func BondConfig() bool {
 	_ = RunCmdSilent("ip", "link", "set", "bond0", "down")
 	Sleep(1)
 	_ = RunCmdSilent("ip", "link", "set", "bond0", "up")
+
+	// 实时设置 Bond 参数（在 up 之后，确保立即生效）
+	if bondMode == "802.3ad" {
+		Info(T("apply_bond_params"))
+		err1 := RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4")
+		err2 := RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast")
+		if err1 == nil && err2 == nil {
+			Success(T("bond_params_applied"))
+		} else {
+			Warn(T("bond_params_warn"))
+		}
+	}
 
 	// 添加默认路由
 	if ipv4Gateway != "" {
