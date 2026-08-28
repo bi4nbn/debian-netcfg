@@ -100,11 +100,8 @@
 ### 1. 下载安装
 
 ```bash
-# 方式一：直接下载编译好的二进制
-wget https://bash.niteng.net/netcfg -O /usr/local/bin/netcfg
-chmod +x /usr/local/bin/netcfg
 
-# 方式二：从源码编译
+# 从源码编译
 git clone https://github.com/user/debian-netcfg.git
 cd debian-netcfg
 ./build.sh
