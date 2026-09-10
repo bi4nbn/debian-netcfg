@@ -10,16 +10,27 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # 需要完整历史与 tag 才能注入正确的版本号
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.23"
 
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test ./...
+
       - name: Compile static linux amd64 binary
         run: |
           mkdir -p out
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o out/netcfg
+          VERSION="$(git describe --tags --always --dirty)"
+          echo "Building version: $VERSION"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.Version=$VERSION" -o out/netcfg
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

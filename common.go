@@ -2,10 +2,14 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -43,9 +47,19 @@ func Interact(msg string) { fmt.Printf("%s[Prompt]%s %s", YELLOW, NC, msg) }
 // ------------------------------
 var reader = bufio.NewReader(os.Stdin)
 
+// inputEOF 标记 stdin 是否已关闭（管道/重定向结束后用于安全退出，避免死循环）
+var inputEOF bool
+
+// InputClosed 返回标准输入是否已到达 EOF
+func InputClosed() bool { return inputEOF }
+
 func ReadInput(prompt string, defaultValue string) string {
 	fmt.Print(prompt)
-	input, _ := reader.ReadString('\n')
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		// 记录 EOF，仍返回已读取到的内容（可能为空）
+		inputEOF = true
+	}
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return defaultValue
@@ -54,12 +68,23 @@ func ReadInput(prompt string, defaultValue string) string {
 }
 
 func ReadConfirm(prompt string, defaultYes bool) bool {
-	defStr := "y"
-	if !defaultYes {
-		defStr = "n"
+	defStr := "n"
+	if defaultYes {
+		defStr = "y"
 	}
-	input := ReadInput(prompt, defStr)
-	return strings.ToLower(input) == "y"
+	for {
+		input := strings.ToLower(ReadInput(prompt, defStr))
+		if InputClosed() {
+			return false
+		}
+		switch input {
+		case "y", "yes":
+			return true
+		case "n", "no":
+			return false
+		}
+		Error(T("invalid_yes_no"))
+	}
 }
 
 func PromptIPv4Config(defaultIP, defaultMask, defaultGW string) (ip, mask, gw string) {
@@ -74,8 +99,15 @@ func PromptIPv4Config(defaultIP, defaultMask, defaultGW string) (ip, mask, gw st
 	var inputCIDR string
 	for {
 		inputCIDR = ReadInput(T("input_ipv4"), defaultCIDR)
+		if InputClosed() {
+			return "", "", ""
+		}
 		if inputCIDR == "" {
 			inputCIDR = defaultCIDR
+		}
+		if inputCIDR == "" {
+			Error(T("invalid_ipv4"))
+			continue
 		}
 		_, _, err := net.ParseCIDR(inputCIDR)
 		if err != nil {
@@ -104,6 +136,9 @@ func PromptIPv4Config(defaultIP, defaultMask, defaultGW string) (ip, mask, gw st
 	if ReadConfirm(fmt.Sprintf(T("auto_gw_confirm"), gw), false) {
 		for {
 			inputGW := ReadInput(T("input_gw"), gw)
+			if InputClosed() {
+				return "", "", ""
+			}
 			if inputGW == "" {
 				inputGW = gw
 			}
@@ -122,6 +157,9 @@ func PromptIPv4Config(defaultIP, defaultMask, defaultGW string) (ip, mask, gw st
 func PromptIPv6Config() (addr, gw string) {
 	for {
 		addr = ReadInput(T("input_ipv6_addr"), "")
+		if InputClosed() {
+			return "", ""
+		}
 		if ValidateIPv6CIDR(addr) {
 			break
 		}
@@ -129,6 +167,9 @@ func PromptIPv6Config() (addr, gw string) {
 	}
 	for {
 		gw = ReadInput(T("input_ipv6_gw"), "")
+		if InputClosed() {
+			return "", ""
+		}
 		if ValidateIPv6(gw) {
 			break
 		}
@@ -165,39 +206,49 @@ func RunCmdSilent(name string, args ...string) error {
 	return cmd.Run()
 }
 
-func CheckAptNetwork() {
+// CheckAptNetwork 检查是否可访问 apt 源
+func CheckAptNetwork() error {
 	err1 := RunCmdSilent("ping", "-c", "1", "-W", "2", "deb.debian.org")
 	err2 := RunCmdSilent("ping", "-c", "1", "-W", "2", "mirrors.aliyun.com")
 	if err1 != nil && err2 != nil {
-		Fatal(T("no_network_apt"))
+		return fmt.Errorf(T("no_network_apt"))
 	}
+	return nil
 }
 
-func InstallBaseDeps() {
+// EnsureDependencies 检查 iproute2 / ifupdown 是否存在，缺失时经用户确认后自动安装。
+// 不再使用 Fatal，由调用方决定如何优雅退出。
+func EnsureDependencies() error {
 	var needInstall []string
 	if !CommandExists("ip") {
 		needInstall = append(needInstall, "iproute2")
+		Warn(T("ip_cmd_not_found"))
 	}
 	if !CommandExists("ifup") || !CommandExists("ifdown") {
 		needInstall = append(needInstall, "ifupdown")
+		Warn(T("ifup_not_found"))
 	}
-	if len(needInstall) > 0 {
-		err := RunCmdSilent("apt", "update", "-qq")
-		if err != nil {
-			Fatal(T("apt_update_fail"))
-		}
-		args := append([]string{"install", "-y", "-qq"}, needInstall...)
-		err = RunCmdSilent("apt", args...)
-		if err != nil {
-			Fatal(T("apt_install_fail"))
-		}
+	if len(needInstall) == 0 {
+		return nil
+	}
+
+	pkgList := strings.Join(needInstall, " ")
+	if !ReadConfirm(fmt.Sprintf(T("dep_install_prompt"), pkgList), true) {
+		return fmt.Errorf(T("dep_missing"), pkgList)
+	}
+	if err := CheckAptNetwork(); err != nil {
+		return err
+	}
+	if err := runAptUpdateInstall(needInstall...); err != nil {
+		return fmt.Errorf("%s: %v", T("apt_install_fail"), err)
 	}
 	if !CommandExists("ip") {
-		Fatal(T("ip_unavailable"))
+		return fmt.Errorf(T("ip_unavailable"))
 	}
 	if !CommandExists("ifup") || !CommandExists("ifdown") {
-		Fatal(T("ifupdown_unavailable"))
+		return fmt.Errorf(T("ifupdown_unavailable"))
 	}
+	return nil
 }
 
 func DisableConflictServices() {
@@ -213,18 +264,6 @@ func DisableConflictServices() {
 
 func Sleep(seconds int) {
 	time.Sleep(time.Duration(seconds) * time.Second)
-}
-
-func GetCurrentSSHLocalIP() string {
-	conn := os.Getenv("SSH_CONNECTION")
-	if conn == "" {
-		return ""
-	}
-	parts := strings.Fields(conn)
-	if len(parts) >= 3 {
-		return parts[2]
-	}
-	return ""
 }
 
 func GetCurrentSSHPeerIP() string {
@@ -295,48 +334,19 @@ func GetAutoGatewayFromCIDR(cidrStr string) (string, error) {
 	return gatewayIP.String(), nil
 }
 
+// IsIPInCIDR 判断 ip 是否落在 cidrStr 网段内（用于网关可达性预检）
+func IsIPInCIDR(ip, cidrStr string) bool {
+	parsed := net.ParseIP(ip)
+	_, ipNet, err := net.ParseCIDR(cidrStr)
+	if err != nil || parsed == nil {
+		return false
+	}
+	return ipNet.Contains(parsed)
+}
+
 func ValidateIPv4(ip string) bool {
 	parsed := net.ParseIP(ip)
 	return parsed != nil && parsed.To4() != nil
-}
-
-func ValidateNetmask(mask string) bool {
-	if !ValidateIPv4(mask) {
-		return false
-	}
-	ipMask := net.IPMask(net.ParseIP(mask).To4())
-	ones, bits := ipMask.Size()
-	return bits == 32 && ones >= 0 && ones <= 32
-}
-
-func ParseNetmask(input string) (string, error) {
-	if strings.Contains(input, ".") {
-		if !ValidateIPv4(input) {
-			return "", fmt.Errorf("invalid netmask format")
-		}
-		mask := net.ParseIP(input).To4()
-		if mask == nil {
-			return "", fmt.Errorf("invalid netmask")
-		}
-		maskInt := uint32(mask[0])<<24 | uint32(mask[1])<<16 | uint32(mask[2])<<8 | uint32(mask[3])
-		if maskInt != 0 {
-			inv := ^maskInt + 1
-			if inv&(inv-1) != 0 {
-				return "", fmt.Errorf("non-contiguous netmask")
-			}
-		}
-		return input, nil
-	}
-	var prefix int
-	_, err := fmt.Sscanf(input, "%d", &prefix)
-	if err != nil {
-		return "", fmt.Errorf("invalid format")
-	}
-	if prefix < 0 || prefix > 32 {
-		return "", fmt.Errorf("CIDR prefix must be 0-32")
-	}
-	mask := net.CIDRMask(prefix, 32)
-	return net.IP(mask).String(), nil
 }
 
 func ValidateIPv6CIDR(addr string) bool {
@@ -396,8 +406,30 @@ func BackupFile(path string) string {
 	return backupPath
 }
 
+// CopyFile 复制文件并保留权限
+func CopyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
 // ------------------------------
-// 初始化状态持久化函数（新增）
+// 初始化状态持久化函数
 // ------------------------------
 // IsInitialized 检查系统是否已完成初始化（通过标记文件是否存在判断）
 func IsInitialized() bool {
@@ -410,55 +442,164 @@ func markInitialized() {
 	_ = os.WriteFile(initFlagPath, []byte("1"), 0644)
 }
 
-// ================== 更新自身（国际化版） ==================
+// ================== 更新自身（国际化 + 完整性校验版） ==================
 
-// updateSelf 从远程下载最新版本并替换自身
-func updateSelf() {
-	const (
-		remoteURL = "https://bash.niteng.net/netcfg"
-		localPath = "/usr/local/bin/netcfg"
-	)
+const (
+	updateRemoteURL = "https://bash.niteng.net/netcfg"
+	updateFallback  = "/usr/local/bin/netcfg"
+)
 
-	Info(fmt.Sprintf(T("update_self_start"), remoteURL))
-
-	// 优先使用 wget，失败则尝试 curl
-	var err error
-	var out string
-
-	// 先尝试 wget
-	if CommandExists("wget") {
-		out, err = RunCmd("wget", "-q", "-O", localPath+".tmp", remoteURL)
-		if err == nil {
-			goto install
-		}
-		Warn(T("update_self_wget_fail"))
+// currentExecutablePath 返回当前运行程序自身的真实路径（解析软链接）
+func currentExecutablePath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return updateFallback
 	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		resolved = exe
+	}
+	if !filepath.IsAbs(resolved) {
+		return updateFallback
+	}
+	return resolved
+}
 
-	// 再尝试 curl
+// downloadFile 使用 wget/curl 下载文件（curl 加 -f 以便对 HTTP 错误码失败）
+func downloadFile(url, dest string, verbose bool) error {
+	var lastErr error
+	if CommandExists("wget") {
+		if out, err := RunCmd("wget", "-q", "-O", dest, url); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("wget: %v %s", err, strings.TrimSpace(out))
+			if verbose {
+				Warn(T("update_self_wget_fail"))
+			}
+		}
+	}
 	if CommandExists("curl") {
-		out, err = RunCmd("curl", "-s", "-o", localPath+".tmp", remoteURL)
-		if err == nil {
-			goto install
+		if out, err := RunCmd("curl", "-fsSL", "-o", dest, url); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("curl: %v %s", err, strings.TrimSpace(out))
 		}
+	}
+	if lastErr == nil {
+		return fmt.Errorf(T("update_self_no_tool"))
+	}
+	return lastErr
+}
+
+// fileSHA256 计算文件 SHA256
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// normalizeSHA256 从校验文件中提取 64 位十六进制摘要
+func normalizeSHA256(raw string) string {
+	for _, field := range strings.Fields(raw) {
+		field = strings.TrimPrefix(field, "sha256:")
+		field = strings.TrimPrefix(field, "*")
+		field = strings.ToLower(strings.TrimSpace(field))
+		if len(field) == 64 && strings.Trim(field, "0123456789abcdef") == "" {
+			return field
+		}
+	}
+	return ""
+}
+
+// isELF 校验下载内容是否为 ELF 可执行文件（防止把 HTML 错误页写成二进制）
+func isELF(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return false
+	}
+	return magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'
+}
+
+// updateSelf 从远程下载最新版本并替换自身。
+// 校验顺序：NETCFG_UPDATE_SHA256 固定校验值 > 远程 .sha256 校验文件 > 无校验需用户确认。
+func updateSelf() {
+	localPath := currentExecutablePath()
+	tmpPath := localPath + ".tmp"
+	defer func() {
+		_ = os.Remove(tmpPath)
+		_ = os.Remove(tmpPath + ".sha256")
+	}()
+
+	Info(fmt.Sprintf(T("update_self_start"), updateRemoteURL))
+	Warn(fmt.Sprintf("Target binary: %s", localPath))
+
+	if err := downloadFile(updateRemoteURL, tmpPath, true); err != nil {
 		Warn(fmt.Sprintf(T("update_self_curl_fail"), err.Error()))
-		if out != "" {
-			fmt.Println(out)
-		}
 		return
 	}
 
-	Error(T("update_self_no_tool"))
-	return
+	if !isELF(tmpPath) {
+		Error(T("update_self_bad_binary"))
+		return
+	}
 
-install:
-	// 赋予执行权限
-	if err := os.Chmod(localPath+".tmp", 0755); err != nil {
+	// ---- 完整性校验 ----
+	actual, err := fileSHA256(tmpPath)
+	if err != nil {
+		Error(fmt.Sprintf(T("update_self_checksum_fail"), "n/a", err.Error()))
+		return
+	}
+
+	expected := strings.ToLower(strings.TrimSpace(os.Getenv("NETCFG_UPDATE_SHA256")))
+	if expected == "" {
+		// 尝试下载同名 .sha256 校验文件
+		if err := downloadFile(updateRemoteURL+".sha256", tmpPath+".sha256", false); err == nil {
+			if data, err := os.ReadFile(tmpPath + ".sha256"); err == nil {
+				expected = normalizeSHA256(string(data))
+			}
+		}
+	}
+
+	switch {
+	case expected != "" && expected != actual:
+		Error(fmt.Sprintf(T("update_self_checksum_fail"), expected, actual))
+		return
+	case expected != "":
+		Success(T("update_self_checksum_ok"))
+	default:
+		Warn(T("update_self_no_checksum"))
+		if !ReadConfirm(T("update_self_confirm"), false) {
+			Info(T("cancelled"))
+			return
+		}
+	}
+
+	// ---- 备份当前程序，失败则中止 ----
+	backupPath := fmt.Sprintf("%s.bak_update_%s", localPath, time.Now().Format("20060102_150405"))
+	if err := CopyFile(localPath, backupPath); err != nil {
+		Error(fmt.Sprintf(T("update_self_backup_fail"), err.Error()))
+		return
+	}
+	Success(fmt.Sprintf(T("update_self_backup"), backupPath))
+
+	// ---- 覆盖原文件 ----
+	if err := os.Chmod(tmpPath, 0755); err != nil {
 		Error(fmt.Sprintf(T("update_self_chmod_fail"), err.Error()))
 		return
 	}
-
-	// 覆盖原文件
-	if err := os.Rename(localPath+".tmp", localPath); err != nil {
+	if err := os.Rename(tmpPath, localPath); err != nil {
 		Error(fmt.Sprintf(T("update_self_rename_fail"), err.Error()))
 		return
 	}

@@ -2,53 +2,68 @@ package main
 
 import (
 	"fmt"
-	"os"
 )
 
 func IPv6OnlyConfig() bool {
 	fmt.Println(T("ipv6_only_title"))
 	fmt.Println()
 	CheckRoot()
+	if err := EnsureDependencies(); err != nil {
+		Error(err.Error())
+		return false
+	}
 	Info(T("detect_nics"))
-	ifaces := ListAllInterfaces()
+	ifaces, err := ListAllInterfaces()
+	if err != nil {
+		Error(err.Error())
+		return false
+	}
 	if len(ifaces) == 0 {
-		Fatal(T("no_valid_nics"))
+		Error(T("no_valid_nics"))
+		return false
 	}
 	Info(T("available_nics"))
 	for i, iface := range ifaces {
 		fmt.Printf("  %d. %s\n", i+1, iface)
 	}
 	indexStr := ReadInput(T("select_nic_prompt"), "1")
-	if indexStr == "0" {
+	if InputClosed() || indexStr == "0" {
 		Info(T("cancelled"))
 		return false
 	}
 	index := 1
 	fmt.Sscanf(indexStr, "%d", &index)
 	if index < 1 || index > len(ifaces) {
-		Fatal(T("invalid_select"))
+		Error(T("invalid_select"))
+		return false
 	}
 	targetIface := ifaces[index-1]
 	Success(fmt.Sprintf(T("selected_nic"), targetIface))
 	ipv6Addr, ipv6Gateway := PromptIPv6Config()
+	if InputClosed() {
+		Info(T("cancelled"))
+		return false
+	}
 	fmt.Println()
 	if !ReadConfirm(T("apply_confirm"), true) {
 		Info(T("cancelled"))
 		return false
 	}
+
+	// 记录旧地址，在线切换时只删除本工具管理的这一个地址
+	oldIPv6 := GetConfiguredIPv6Address(targetIface)
+
 	BackupFile(interfacesPath)
 	Info(T("write_config"))
-	err := AddIPv6ToConfig(targetIface, ipv6Addr, ipv6Gateway)
-	if err != nil {
-		Fatal(fmt.Sprintf(T("write_fail"), err))
+	if err := AddIPv6ToConfig(targetIface, ipv6Addr, ipv6Gateway); err != nil {
+		Error(fmt.Sprintf(T("write_fail"), err))
+		return false
 	}
 	if !ValidateConfig(targetIface) {
 		return false
 	}
-	_ = os.Chmod(interfacesPath, 0644)
 	Success(T("config_written"))
-	err = ApplyIPv6Online(targetIface, ipv6Addr, ipv6Gateway)
-	if err != nil {
+	if err := ApplyIPv6Online(targetIface, ipv6Addr, ipv6Gateway, oldIPv6); err != nil {
 		Warn(T("ipv6_gw_warn"))
 	}
 	ConfigureDNS(targetIface, true)

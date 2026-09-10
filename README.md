@@ -1,6 +1,6 @@
 # Debian Netcfg 网络配置工具
 
-[![Build netcfg Linux amd64](https://github.com/user/debian-netcfg/actions/workflows/build.yml/badge.svg)](https://github.com/user/debian-netcfg/actions/workflows/build.yml)
+[![Build netcfg Linux amd64](https://github.com/bi4nbn/debian-netcfg/actions/workflows/build.yml/badge.svg)](https://github.com/bi4nbn/debian-netcfg/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -57,7 +57,8 @@
 - **配置自动备份**：修改前生成带时间戳备份（如 `interfaces.bak_20260806_153022`）
 - **语法预校验**：写入后执行 `ifup --no-act` 验证配置正确性
 - **冲突服务自动停止**：NetworkManager / systemd-networkd 自动禁用
-- **依赖自动安装**：iproute2 / ifupdown / ifenslave 缺失时自动补装
+- **依赖检测**：iproute2 / ifupdown 缺失时提示并询问是否补装，ifenslave 在配置 Bond 时按需补装
+- **配置合并写入**：只替换被管理网卡的 stanza，保留 `source` 指令与其它网卡配置
 
 ### 5. 🌐 完整中英双语支持
 
@@ -71,6 +72,27 @@
 - 替换 APT 源为华为云国内镜像
 - 批量安装运维依赖：wget/curl/sudo/ifenslave
 - SSH 安全加固：仅密钥登录、禁用密码、限制登录尝试
+
+---
+
+## 🔐 安全行为与可配置项
+
+系统初始化（菜单第 5 项）会改写 APT 源与 SSH 配置，请先了解以下行为：
+
+- **公钥为追加写入**：`/root/.ssh/authorized_keys` 采用"追加+去重"，**不会**清空服务器上已有的密钥。
+- **关闭密码登录**：按设计写入 `PasswordAuthentication no`，仅允许公钥认证。
+  可用 `NETCFG_KEEP_PASSWORD_AUTH=1` 临时保留密码登录。
+  ⚠️ 执行前请确认自己持有 `NETCFG_SSH_PUBKEY` / `/etc/netcfg/ssh_pubkey` / 内置公钥所对应的**私钥**。
+- **公钥来源可覆盖**（优先级从高到低）：
+  1. 环境变量 `NETCFG_SSH_PUBKEY`（直接给出完整公钥行）
+  2. 文件 `/etc/netcfg/ssh_pubkey`
+  3. 源码内置默认公钥
+- **可跳过 SSH 加固**：设置 `NETCFG_SKIP_SSH_HARDENING=1` 后，初始化只改 APT 源与装包，不动 SSH 配置。
+- **sshd 配置回滚**：`sshd -t` 校验失败时会从真实备份路径恢复并报错，不会留下损坏的 `sshd_config`。
+- **连通性测试不再隐式初始化**：菜单第 4 项只做 DNS 测试，如需初始化必须显式确认（默认不执行）。
+- **语言持久化**：语言选择写入 `/etc/netcfg.lang`，重启后保留。
+- **自更新校验**：菜单第 7 项下载后会校验 ELF 头与 SHA256
+  （优先 `NETCFG_UPDATE_SHA256`，其次远程 `netcfg.sha256`），无校验值时必须人工确认；替换前自动备份原程序。
 
 ---
 
@@ -102,7 +124,7 @@
 ```bash
 
 # 从源码编译
-git clone https://github.com/user/debian-netcfg.git
+git clone https://github.com/bi4nbn/debian-netcfg.git
 cd debian-netcfg
 ./build.sh
 cp netcfg /usr/local/bin/
@@ -124,7 +146,7 @@ sudo netcfg
 
 ```text
 ======================================
-  Debian 网络配置工具 v1.1.6
+  Debian 网络配置工具 v1.1.7
 ======================================
   1. 单网卡IP配置
   2. 网卡绑定链路聚合
@@ -144,6 +166,8 @@ sudo netcfg
 默认IPv6网关：N/A
 ======================================
 ```
+
+> 界面默认语言为英文（`1. English`），可在主菜单第 6 项切换为中文，选择结果持久化保存。
 
 ---
 
@@ -226,10 +250,14 @@ cat /proc/net/bonding/bond0 | grep "Transmit Hash Policy"
 ### 5. 系统初始化
 
 **功能**：
-- 替换 APT 源为华为云国内镜像
+- 替换 APT 源为华为云国内镜像（改写前备份）
 - 安装基础依赖：wget/curl/sudo/ifenslave
-- SSH 安全加固：仅密钥登录、禁用密码
+- SSH 加固：公钥**追加**写入、`AllowTcpForwarding yes`、限制登录尝试
+  - 按设计关闭密码登录（`PasswordAuthentication no`），可用 `NETCFG_KEEP_PASSWORD_AUTH=1` 保留
+  - 可用 `NETCFG_SKIP_SSH_HARDENING=1` 跳过 SSH 部分
 - 写入 `/etc/netcfg.initialized` 标记防止重复执行
+
+> 菜单第 4 项的连通性测试**不会**自动触发初始化，需要显式确认（默认不执行）。
 
 ---
 
@@ -288,10 +316,14 @@ ip route get 192.168.1.100
 
 | 文件路径 | 说明 | 备份策略 |
 |----------|------|----------|
-| `/etc/network/interfaces` | 主网络配置 | 每次修改前生成 `.bak_YYYYMMDD_HHMMSS` |
-| `/etc/resolv.conf` | DNS 配置 | 修改前生成备份 |
+| `/etc/network/interfaces` | 主网络配置（块级替换写入） | 每次修改前生成 `.bak_YYYYMMDD_HHMMSS` |
+| `/etc/resolv.conf` | DNS 配置 | 修改前生成备份，保留原有非阿里云 DNS |
+| `/etc/apt/sources.list` | APT 源（初始化时改写） | 初始化前生成备份 |
+| `/etc/ssh/sshd_config` | SSH 配置（初始化时改写） | 初始化前生成备份，校验失败自动回滚 |
 | `/etc/modules-load.d/bonding.conf` | Bond 内核模块开机自启 | Bond 模式自动创建，切换单网卡自动删除 |
 | `/etc/netcfg.initialized` | 系统初始化标记 | 防止重复执行初始化 |
+| `/etc/netcfg.lang` | 语言偏好持久化 | 切换语言时写入 |
+| `/etc/netcfg/ssh_pubkey` | 可选：自定义待下发公钥 | 存在时优先于内置公钥使用 |
 
 ---
 
@@ -302,36 +334,47 @@ ip route get 192.168.1.100
 ```text
 debian-netcfg/
 ├── main.go          # 程序入口、主菜单循环
-├── common.go        # 公共工具：日志、IP校验、SSH保护、命令执行
-├── network.go       # 核心网络层：网卡枚举、IP热加载、配置生成
+├── common.go        # 公共工具：日志、输入、IP校验、SSH保护、依赖检查、自更新
+├── network.go       # 核心网络层：网卡枚举、IP热加载、interfaces 块级写入
 ├── bond.go          # Bond 链路聚合完整实现
 ├── single.go        # 单网卡配置逻辑
 ├── ipv6.go          # 独立 IPv6 配置模块
 ├── dnstest.go       # DNS 连通性测速
 ├── init.go          # 系统初始化：APT源、SSH加固
-├── i18n.go          # 中英双语国际化（200+ 条目）
+├── i18n.go          # 中英双语国际化（200 条目，中英 key 完全对齐）
+├── network_test.go  # interfaces 读写相关单元测试
+├── init_test.go     # SSH 公钥合并/校验相关单元测试
 ├── build.sh         # 静态编译 + UPX 压缩
-├── push.sh          # 一键发布：提交、打标签、推送、编译
-├── ftp.sh           # FTP 上传到远程服务器
+├── push.sh          # 一键发布：测试、提交、打标签、推送、编译
 ├── go.mod           # Go 模块定义
+├── LICENSE          # MIT 协议
 └── README.md        # 本文档
 ```
 
 ### 代码统计
 
 ```text
-文件          行数    职责
-common.go     480     公共工具库
-network.go    462     核心网络层
-i18n.go       365     国际化字典
-bond.go       211     Bond 配置
-init.go       208     系统初始化
-single.go     155     单网卡配置
-main.go       127     程序入口
-dnstest.go    83      DNS 测试
-ipv6.go       63      IPv6 配置
+文件             行数    职责
+network.go        816    核心网络层
+common.go         622    公共工具库
+i18n.go           476    国际化字典
+init.go           345    系统初始化
+bond.go           259    Bond 配置
+network_test.go   214    单元测试（interfaces 读写）
+single.go         200    单网卡配置
+init_test.go      162    单元测试（SSH 公钥处理）
+main.go           141    程序入口
+dnstest.go         87    DNS 测试
+ipv6.go            78    IPv6 配置
 ─────────────────────────────
-总计          2154    Go 代码
+总计             3400    Go 代码（含测试）
+```
+
+### 测试
+
+```bash
+go vet ./...
+go test ./...      # 覆盖 interfaces 块级替换、IPv6 追加、authorized_keys 合并、校验值解析
 ```
 
 ### 编译命令
@@ -411,6 +454,22 @@ A: 工具会自动检测并清除冲突 IP：
 2. 自动清除其他接口上的相同 IP
 3. 显示提示信息告知用户
 
+### Q: 执行系统初始化会不会把我锁在 SSH 外面？
+
+A: 初始化会**关闭密码登录**（这是设计意图），因此请先确认自己持有对应私钥。已做的保护：
+1. `authorized_keys` 为**追加去重**写入，不会删除你已有的公钥（也会一并保留）；
+2. 只有在确认公钥确实写入 `authorized_keys` 之后才会关闭密码登录；写入异常时强制保留 `yes`；
+3. `sshd -t` 校验失败时自动从备份恢复 `sshd_config`，不会留下损坏配置。
+
+临时保留密码登录：`NETCFG_KEEP_PASSWORD_AUTH=1`；完全跳过 SSH 加固：`NETCFG_SKIP_SSH_HARDENING=1`。
+
+### Q: 工具会覆盖我原有的 interfaces / DNS 配置吗？
+
+A: 不会整体覆盖：
+- `interfaces` 采用块级替换，只重写被管理网卡的 stanza，保留 `source` 指令与其它网卡；
+- `resolv.conf` 以阿里云 DNS 优先，原有其它（内网）DNS 追加保留；
+- 所有改动前都会生成带时间戳的备份。
+
 ---
 
 ## 📋 配置示例
@@ -486,7 +545,7 @@ iface eth0 inet dhcp
 
 ```bash
 # 克隆项目
-git clone https://github.com/user/debian-netcfg.git
+git clone https://github.com/bi4nbn/debian-netcfg.git
 cd debian-netcfg
 
 # 安装依赖
@@ -536,7 +595,7 @@ git commit -m "refactor: 重构 XXX 模块"
 
 - 作者：bi4nbn
 - 邮箱：bi4nbn@qq.com
-- GitHub：[https://github.com/user/debian-netcfg](https://github.com/user/debian-netcfg)
+- GitHub：[https://github.com/bi4nbn/debian-netcfg](https://github.com/bi4nbn/debian-netcfg)
 
 ---
 

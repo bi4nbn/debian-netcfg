@@ -10,24 +10,36 @@ func SingleNicConfig() bool {
 	fmt.Println(T("single_title"))
 	fmt.Println()
 	CheckRoot()
+	if err := EnsureDependencies(); err != nil {
+		Error(err.Error())
+		return false
+	}
+	// 单网卡流程同样需要停止冲突的网络管理服务
+	DisableConflictServices()
 	Info(T("detect_nics"))
-	ifaces := ListPhysicalInterfaces()
+	ifaces, err := ListPhysicalInterfaces()
+	if err != nil {
+		Error(err.Error())
+		return false
+	}
 	if len(ifaces) == 0 {
-		Fatal(T("no_valid_nics"))
+		Error(T("no_valid_nics"))
+		return false
 	}
 	Info(T("available_nics"))
 	for i, iface := range ifaces {
 		fmt.Printf("  %d. %s\n", i+1, iface)
 	}
 	indexStr := ReadInput(T("select_nic_prompt"), "1")
-	if indexStr == "0" {
+	if InputClosed() || indexStr == "0" {
 		Info(T("cancelled"))
 		return false
 	}
 	index := 1
 	fmt.Sscanf(indexStr, "%d", &index)
 	if index < 1 || index > len(ifaces) {
-		Fatal(T("invalid_select"))
+		Error(T("invalid_select"))
+		return false
 	}
 	defaultIface := ifaces[index-1]
 	Success(fmt.Sprintf(T("selected_nic"), defaultIface))
@@ -62,6 +74,10 @@ func SingleNicConfig() bool {
 		useStatic = true
 		ipv4Addr, ipv4Netmask, ipv4Gateway = PromptIPv4Config("", "", "")
 	}
+	if InputClosed() {
+		Info(T("cancelled"))
+		return false
+	}
 	configIPv6 := false
 	var ipv6Addr, ipv6Gateway string
 	fmt.Println()
@@ -69,6 +85,10 @@ func SingleNicConfig() bool {
 	if ReadConfirm(T("config_ipv6_now"), false) {
 		configIPv6 = true
 		ipv6Addr, ipv6Gateway = PromptIPv6Config()
+		if InputClosed() {
+			Info(T("cancelled"))
+			return false
+		}
 	} else {
 		Info(T("ipv6_skipped"))
 	}
@@ -77,6 +97,9 @@ func SingleNicConfig() bool {
 		Info(T("cancelled"))
 		return false
 	}
+
+	// 记录旧 IPv6 地址，供在线切换时精确清理
+	oldIPv6 := GetConfiguredIPv6Address(defaultIface)
 
 	// ========== 关键修复：在配置新 IP 之前清理 bond0 ==========
 	// 这是解决从 bond 切换到单网卡时 IP 冲突的核心修复
@@ -116,14 +139,13 @@ func SingleNicConfig() bool {
 
 	BackupFile(interfacesPath)
 	Info(T("write_config"))
-	err := WriteSingleConfig(defaultIface, useStatic, ipv4Addr, ipv4Netmask, ipv4Gateway, configIPv6, ipv6Addr, ipv6Gateway)
-	if err != nil {
-		Fatal(fmt.Sprintf(T("write_fail"), err))
+	if err := WriteSingleConfig(defaultIface, useStatic, ipv4Addr, ipv4Netmask, ipv4Gateway, configIPv6, ipv6Addr, ipv6Gateway); err != nil {
+		Error(fmt.Sprintf(T("write_fail"), err))
+		return false
 	}
 	if !ValidateConfig(defaultIface) {
 		return false
 	}
-	_ = os.Chmod(interfacesPath, 0644)
 	Success(T("config_written"))
 	ConfigureDNS(defaultIface, configIPv6)
 	if useStatic {
@@ -139,10 +161,10 @@ func SingleNicConfig() bool {
 		_ = RunCmdSilent("ifup", defaultIface)
 	}
 	if configIPv6 {
-		_ = ApplyIPv6Online(defaultIface, ipv6Addr, ipv6Gateway)
+		_ = ApplyIPv6Online(defaultIface, ipv6Addr, ipv6Gateway, oldIPv6)
 	}
 	Sleep(2)
-	if out, err := RunCmd("ip", "link", "show", defaultIface); err == nil && strings.Contains(out, "state UP") {
+	if out, err := RunCmd("ip", "link", "show", defaultIface); err == nil && (strings.Contains(out, "state UP") || strings.Contains(out, "LOWER_UP")) {
 		Success(fmt.Sprintf(T("nic_is_up"), defaultIface))
 	} else {
 		Error(fmt.Sprintf(T("nic_is_down"), defaultIface))

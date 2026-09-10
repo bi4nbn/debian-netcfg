@@ -1,0 +1,12 @@
+# 编译产物与本地临时文件
+out/
+*.tmp
+*.bak_*
+*.bak_update_*
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+
+# 注意：仓库按设计需要提交编译好的 ./netcfg 二进制，故不在此忽略

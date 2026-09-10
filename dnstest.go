@@ -71,13 +71,16 @@ func NetworkDNSTest() {
 	Success(T("dns_test_complete"))
 	fmt.Println()
 
-	// 仅当 IPv4 DNS 连通且尚未初始化过时才执行初始化
-	if ipv4Ok && !IsInitialized() {
-		RunInitScript()
-	} else if ipv4Ok && IsInitialized() {
-		Info("System already initialized, skipping.")
-	} else {
+	// 修复：本菜单项不再隐式执行系统初始化（原实现会静默改写 APT 源与 SSH 配置），
+	// 改为明确询问，且默认不执行。
+	if !ipv4Ok {
 		Warn("IPv4 network unreachable, skipping system initialization")
+	} else if IsInitialized() {
+		Info("System already initialized, skipping.")
+	} else if ReadConfirm(T("dns_init_prompt"), false) {
+		RunInitScript()
+	} else {
+		Info(T("cancelled"))
 	}
 
 	ReadInput(T("press_enter_menu"), "")

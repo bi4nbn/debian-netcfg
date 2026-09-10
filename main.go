@@ -24,7 +24,10 @@ func showMenu() {
 	fmt.Println()
 
 	fmt.Printf("%s%s%s\n", BLUE, T("net_overview"), NC)
-	physNics := ListPhysicalInterfaces()
+	physNics, err := ListPhysicalInterfaces()
+	if err != nil {
+		Warn(err.Error())
+	}
 	if len(physNics) > 0 {
 		fmt.Println(T("phys_nics"))
 		for _, nic := range physNics {
@@ -75,14 +78,24 @@ func switchLanguage() {
 	default:
 		currentLang = "en"
 	}
+	saveLang()
 	Success(T("lang_switched"))
 	Sleep(1)
 }
 
 func main() {
+	// 读取持久化的语言设置
+	loadLang()
+
 	for {
 		showMenu()
 		choice := ReadInput(T("menu_prompt"), "")
+		// stdin 已关闭时安全退出，避免菜单空转
+		if InputClosed() {
+			fmt.Println()
+			Info(T("menu_eof_exit"))
+			return
+		}
 		switch choice {
 		case "1":
 			fmt.Print("\033[H\033[2J")
