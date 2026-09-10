@@ -128,18 +128,12 @@ func isValidSSHPublicKey(key string) bool {
 
 // ensureAuthorizedKey 以“追加去重”方式写入公钥，保留服务器上已有的全部密钥。
 // 返回：除本工具公钥外的其它密钥数量、是否新增、错误。
-// 注意：这里刻意不把“上一次由本工具下发的公钥”计入其它密钥，
-// 否则重复执行初始化会误判为用户自有公钥从而关闭密码登录。
+// 注意：这里刻意不把“上一次由本工具下发的公钥”计入其它密钥。
+// 文件内容按原样保留（含注释与空行），只在末尾追加缺失的公钥。
 func ensureAuthorizedKey(path, key string) (int, bool, error) {
-	var existing []string
+	var raw string
 	if data, err := os.ReadFile(path); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			l := strings.TrimSpace(line)
-			if l == "" || strings.HasPrefix(l, "#") {
-				continue
-			}
-			existing = append(existing, l)
-		}
+		raw = string(data)
 	} else if !os.IsNotExist(err) {
 		return 0, false, err
 	}
@@ -149,7 +143,11 @@ func ensureAuthorizedKey(path, key string) (int, bool, error) {
 
 	others := 0
 	found := false
-	for _, l := range existing {
+	for _, line := range strings.Split(raw, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
 		f := strings.Fields(l)
 		if len(f) >= 2 && f[0]+" "+f[1] == base {
 			found = true
@@ -161,8 +159,11 @@ func ensureAuthorizedKey(path, key string) (int, bool, error) {
 		return others, false, nil
 	}
 
-	existing = append(existing, key)
-	content := strings.Join(existing, "\n") + "\n"
+	content := raw
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += key + "\n"
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return 0, false, err
 	}
@@ -265,6 +266,11 @@ PermitUserEnvironment no
 PrintMotd no
 AcceptEnv LANG LC_*
 Subsystem sftp /usr/lib/openssh/sftp-server
+
+# 放在末尾：sshd 对同一关键字取"首次出现"的值，因此 drop-in 无法覆盖上面的策略，
+# 但云镜像放在 sshd_config.d/ 里的 Port / ListenAddress 等仍能生效，
+# 不会因为本模板没写 Port 而被改回 22。
+Include /etc/ssh/sshd_config.d/*.conf
 `, passwordLine)
 
 	if err := os.WriteFile(sshdConfigPath, []byte(sshdConfigContent), 0644); err != nil {

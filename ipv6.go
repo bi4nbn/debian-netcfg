@@ -53,13 +53,16 @@ func IPv6OnlyConfig() bool {
 	// 记录旧地址，在线切换时只删除本工具管理的这一个地址
 	oldIPv6 := GetConfiguredIPv6Address(targetIface)
 
-	BackupFile(interfacesPath)
+	backup := BackupFile(interfacesPath)
 	Info(T("write_config"))
 	if err := AddIPv6ToConfig(targetIface, ipv6Addr, ipv6Gateway); err != nil {
 		Error(fmt.Sprintf(T("write_fail"), err))
+		RestoreFile(backup, interfacesPath)
 		return false
 	}
 	if !ValidateConfig(targetIface) {
+		// 校验未通过或用户放弃：回滚磁盘配置
+		RestoreFile(backup, interfacesPath)
 		return false
 	}
 	Success(T("config_written"))

@@ -428,6 +428,23 @@ func CopyFile(src, dst string) error {
 	return out.Sync()
 }
 
+// RestoreFile 用备份覆盖目标文件（备份不存在时返回 false）。
+// 用于"已写盘但后续校验/应用失败"时回滚，避免留下不可用的配置。
+func RestoreFile(backupPath, target string) bool {
+	if backupPath == "" {
+		return false
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		return false
+	}
+	if err := CopyFile(backupPath, target); err != nil {
+		Warn(fmt.Sprintf("failed to restore %s: %v", target, err))
+		return false
+	}
+	Success(fmt.Sprintf(T("restore_backup_ok"), target, backupPath))
+	return true
+}
+
 // ------------------------------
 // 初始化状态持久化函数
 // ------------------------------

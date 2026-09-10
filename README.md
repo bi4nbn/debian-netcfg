@@ -89,6 +89,11 @@
   3. 源码内置默认公钥
 - **可跳过 SSH 加固**：设置 `NETCFG_SKIP_SSH_HARDENING=1` 后，初始化只改 APT 源与装包，不动 SSH 配置。
 - **sshd 配置回滚**：`sshd -t` 校验失败时会从真实备份路径恢复并报错，不会留下损坏的 `sshd_config`。
+- **保留 sshd_config.d 的端口等设置**：生成的 `sshd_config` **末尾**带 `Include /etc/ssh/sshd_config.d/*.conf`。
+  由于 sshd 对同一关键字取"首次出现"的值，云镜像放在 drop-in 里的 `Port` / `ListenAddress` 仍然生效
+  （不会被改回 22），但 drop-in 里若写了 `PasswordAuthentication yes` 也无法推翻本工具的策略。
+- **配置回滚**：`interfaces` 写入后若 `ifup --no-act` 校验未通过或用户选择放弃，会自动用写入前的备份回滚，
+  不会把未通过校验的配置留在磁盘上。
 - **连通性测试不再隐式初始化**：菜单第 4 项只做 DNS 测试，如需初始化必须显式确认（默认不执行）。
 - **语言持久化**：语言选择写入 `/etc/netcfg.lang`，重启后保留。
 - **自更新校验**：菜单第 7 项下载后会校验 ELF 头与 SHA256
@@ -205,9 +210,16 @@ sudo netcfg
 # 自动配置的参数
 bond-mode 802.3ad
 bond-miimon 100
-bond-lacp-rate fast              # 快速协商
+bond-lacp-rate fast              # 快速协商（1s LACPDU）
 bond-xmit-hash-policy layer3+4   # 基于 IP+端口哈希
 ```
+
+> ⚠️ **下发顺序很重要**：内核**拒绝在 bond 接口 UP 之后修改 `lacp_rate`**
+> （`Error: unable to set option because the bond is up`），因此本工具在
+> `ip link add` 之后、挂从网卡与 `up` 之前写入 `lacp_rate` 与 `xmit_hash_policy`，
+> 并在拉起后从 sysfs **回读校验**，不会出现"以为下发成功、实际仍是 slow"的情况。
+> （`xmit_hash_policy` 自内核 commit `53edee2c` 起支持运行时热改，改动立即对新报文生效；
+> 但切换瞬间已有连接可能被重新映射到别的从网卡，出现短暂乱序。）
 
 **验证 Bond 状态**：
 ```bash
@@ -215,9 +227,14 @@ bond-xmit-hash-policy layer3+4   # 基于 IP+端口哈希
 cat /proc/net/bonding/bond0 | grep "Bonding Mode"
 # 输出: Bonding Mode: IEEE 802.3ad Dynamic link aggregation
 
-# 查看 xmit_hash_policy
-cat /proc/net/bonding/bond0 | grep "Transmit Hash Policy"
+# 查看 xmit_hash_policy 与 lacp_rate（这两行才是内核真实生效值）
+grep -Ei "Transmit Hash Policy|LACP rate" /proc/net/bonding/bond0
 # 输出: Transmit Hash Policy: layer3+4 (1)
+#       LACP rate: fast
+
+# 或直接读 sysfs
+cat /sys/class/net/bond0/bonding/lacp_rate          # fast 1
+cat /sys/class/net/bond0/bonding/xmit_hash_policy   # layer3+4 1
 ```
 
 ### 3. 独立 IPv6 配置
@@ -355,26 +372,28 @@ debian-netcfg/
 
 ```text
 文件             行数    职责
-network.go        816    核心网络层
-common.go         622    公共工具库
-i18n.go           476    国际化字典
-init.go           345    系统初始化
-bond.go           259    Bond 配置
-network_test.go   214    单元测试（interfaces 读写）
-single.go         200    单网卡配置
-init_test.go      162    单元测试（SSH 公钥处理）
+network.go        916    核心网络层
+common.go         639    公共工具库
+i18n.go           484    国际化字典
+init.go           351    系统初始化
+bond.go           327    Bond 配置
+network_test.go   326    单元测试（interfaces 读写、DNS 合并、模式解析）
+single.go         203    单网卡配置
+init_test.go      185    单元测试（SSH 公钥处理）
 main.go           141    程序入口
 dnstest.go         87    DNS 测试
-ipv6.go            78    IPv6 配置
+ipv6.go            81    IPv6 配置
+bond_test.go       26    单元测试（bond 参数回读解析）
 ─────────────────────────────
-总计             3400    Go 代码（含测试）
+总计             3766    Go 代码（含测试）
 ```
 
 ### 测试
 
 ```bash
 go vet ./...
-go test ./...      # 覆盖 interfaces 块级替换、IPv6 追加、authorized_keys 合并、校验值解析
+go test ./...      # 覆盖 interfaces 块级替换、IPv6 追加/auto 补全、authorized_keys 合并、
+                   # resolv.conf 合并、网卡模式解析、bond 参数回读、校验值解析
 ```
 
 ### 编译命令

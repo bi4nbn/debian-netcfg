@@ -134,16 +134,16 @@ func SingleNicConfig() bool {
 		}
 	}
 
-	// 清理其他物理网卡的残留 IP（在配置新 IP 之前）
-	CleanOtherInterfaces(defaultIface)
-
-	BackupFile(interfacesPath)
+	backup := BackupFile(interfacesPath)
 	Info(T("write_config"))
 	if err := WriteSingleConfig(defaultIface, useStatic, ipv4Addr, ipv4Netmask, ipv4Gateway, configIPv6, ipv6Addr, ipv6Gateway); err != nil {
 		Error(fmt.Sprintf(T("write_fail"), err))
+		RestoreFile(backup, interfacesPath)
 		return false
 	}
 	if !ValidateConfig(defaultIface) {
+		// 校验未通过或用户放弃：回滚磁盘配置，避免留下起不来的 interfaces
+		RestoreFile(backup, interfacesPath)
 		return false
 	}
 	Success(T("config_written"))
@@ -163,6 +163,9 @@ func SingleNicConfig() bool {
 	if configIPv6 {
 		_ = ApplyIPv6Online(defaultIface, ipv6Addr, ipv6Gateway, oldIPv6)
 	}
+	// 新配置已生效后才清理其它物理网卡的残留 IP。
+	// 放在最后可确保前面任何失败路径都不会先把别的网卡清空导致失联。
+	CleanOtherInterfaces(defaultIface)
 	Sleep(2)
 	if out, err := RunCmd("ip", "link", "show", defaultIface); err == nil && (strings.Contains(out, "state UP") || strings.Contains(out, "LOWER_UP")) {
 		Success(fmt.Sprintf(T("nic_is_up"), defaultIface))

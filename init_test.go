@@ -119,6 +119,29 @@ func TestEnsureAuthorizedKeyPreservesUserKeys(t *testing.T) {
 	}
 }
 
+// authorized_keys 里的注释与空行属于用户内容，追加公钥时不能丢
+func TestEnsureAuthorizedKeyPreservesCommentsAndBlankLines(t *testing.T) {
+	path := authKeysPathIn(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := "# ==== work laptops ====\n" + testKeyUser + "\n\n# ==== backup key ====\n"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := ensureAuthorizedKey(path, testKeySelf); err != nil {
+		t.Fatalf("ensureAuthorizedKey: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	got := string(data)
+	for _, want := range []string{"# ==== work laptops ====", "# ==== backup key ====", "USERKEY", "SELFTESTKEY"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lost %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestEnsureAuthorizedKeyCountsOnlyForeignKeys(t *testing.T) {
 	path := authKeysPathIn(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {

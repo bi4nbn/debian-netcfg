@@ -129,22 +129,40 @@ func GetDefaultIPv6Gateway() string {
 	return "N/A"
 }
 
-func DetectInterfaceIPMode(iface string) (mode string, useStatic bool, currentIP, currentMask, currentGW string) {
-	mode = ""
+// ipModeFromInterfacesFile 从配置文件解析某网卡的 IPv4 模式。
+// 逐行解析并跳过注释，避免 `# iface eth0 inet dhcp` 这类注释被误判为真实配置。
+func ipModeFromInterfacesFile(path, iface string) (mode string, useStatic bool) {
 	useStatic = true
-
-	if _, err := os.Stat(interfacesPath); err == nil {
-		data, _ := os.ReadFile(interfacesPath)
-		content := string(data)
-		if strings.Contains(content, fmt.Sprintf("iface %s inet dhcp", iface)) {
-			mode = "dhcp"
-			useStatic = false
-			Info(T("current_dhcp"))
-		} else if strings.Contains(content, fmt.Sprintf("iface %s inet static", iface)) {
-			mode = "static"
-			useStatic = true
-			Info(T("current_static"))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", true
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
 		}
+		fields := strings.Fields(trimmed)
+		if len(fields) < 4 || fields[0] != "iface" || fields[1] != iface || fields[2] != "inet" {
+			continue
+		}
+		switch fields[3] {
+		case "dhcp":
+			return "dhcp", false
+		case "static":
+			return "static", true
+		}
+	}
+	return "", true
+}
+
+func DetectInterfaceIPMode(iface string) (mode string, useStatic bool, currentIP, currentMask, currentGW string) {
+	mode, useStatic = ipModeFromInterfacesFile(interfacesPath, iface)
+	switch mode {
+	case "dhcp":
+		Info(T("current_dhcp"))
+	case "static":
+		Info(T("current_static"))
 	}
 
 	if mode == "" {
@@ -224,6 +242,40 @@ func deleteDefaultRoute(r defaultRoute) {
 	_ = RunCmdSilent("ip", append([]string{"route", "del"}, r.spec...)...)
 }
 
+// clearIPConflictOnOtherIfaces 若 newIP 已存在于其它接口，则从那些接口移除，
+// 避免"同一 IP 出现在多块网卡"导致的 ARP 冲突与流量异常。
+func clearIPConflictOnOtherIfaces(iface, newIP, newCIDR string) {
+	allOut, _ := RunCmd("ip", "-4", "addr", "show")
+	if !strings.Contains(allOut, newIP+"/") {
+		return
+	}
+	Info(fmt.Sprintf(T("ip_conflict_detected"), newIP))
+	for _, line := range strings.Split(allOut, "\n") {
+		if !strings.Contains(line, "inet "+newIP+"/") {
+			continue
+		}
+		parts := strings.Fields(line)
+		for i, f := range parts {
+			if f != "dev" || i+1 >= len(parts) {
+				continue
+			}
+			conflictIface := parts[i+1]
+			if conflictIface == iface {
+				continue
+			}
+			Info(fmt.Sprintf(T("ip_conflict_cleaning"), conflictIface, newIP))
+			// 用实际存在的地址规格删除，避免前缀不一致时删除失败
+			spec := newCIDR
+			for j, g := range parts {
+				if g == "inet" && j+1 < len(parts) && strings.HasPrefix(parts[j+1], newIP+"/") {
+					spec = parts[j+1]
+				}
+			}
+			_ = RunCmdSilent("ip", "addr", "del", spec, "dev", conflictIface)
+		}
+	}
+}
+
 // ApplyIPv4Online 在线热应用 IPv4（尽量不中断 SSH）
 func ApplyIPv4Online(iface string, newIP, newMask, newGW string, oldIP string) error {
 	Info(T("apply_ipv4_online"))
@@ -254,27 +306,8 @@ func ApplyIPv4Online(iface string, newIP, newMask, newGW string, oldIP string) e
 		Warn(fmt.Sprintf(T("gw_out_of_subnet"), newGW, newCIDR))
 	}
 
-	// 检测并清除所有接口上的相同 IP（防止 IP 冲突）
-	newIPOnly := newIP
-	allOut, _ := RunCmd("ip", "-4", "addr", "show")
-	if strings.Contains(allOut, newIPOnly+"/") {
-		Info(fmt.Sprintf(T("ip_conflict_detected"), newIPOnly))
-		lines := strings.Split(allOut, "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "inet "+newIPOnly+"/") {
-				parts := strings.Fields(line)
-				for i, f := range parts {
-					if f == "dev" && i+1 < len(parts) {
-						conflictIface := parts[i+1]
-						if conflictIface != iface {
-							Info(fmt.Sprintf(T("ip_conflict_cleaning"), conflictIface, newIPOnly))
-							_ = RunCmdSilent("ip", "addr", "del", newCIDR, "dev", conflictIface)
-						}
-					}
-				}
-			}
-		}
-	}
+	// 检测并清除其它接口上的相同 IP（防止 IP 冲突）
+	clearIPConflictOnOtherIfaces(iface, newIP, newCIDR)
 
 	sshPeerIP := GetCurrentSSHPeerIP()
 	oldGW := GetDefaultGateway()
@@ -285,7 +318,9 @@ func ApplyIPv4Online(iface string, newIP, newMask, newGW string, oldIP string) e
 		_ = RunCmdSilent("ip", "route", "add", sshPeerIP+"/32", "via", oldGW, "dev", sshDev)
 	}
 
-	err := RunCmdSilent("ip", "addr", "add", newCIDR, "dev", iface)
+	// 用 replace 而不是 add：重复下发完全相同的地址时 add 会返回
+	// "RTNETLINK answers: File exists"，进而触发 single.go 的 ifdown/ifup 回退（有断连风险）
+	err := RunCmdSilent("ip", "addr", "replace", newCIDR, "dev", iface)
 	if err != nil {
 		return fmt.Errorf("failed to add new IP: %v", err)
 	}
@@ -329,8 +364,24 @@ func ApplyIPv4Online(iface string, newIP, newMask, newGW string, oldIP string) e
 
 	if oldIP != "" && oldIP != newIP {
 		Sleep(1)
-		_ = RunCmdSilent("ip", "addr", "del", oldIP, "dev", iface)
-		Info(fmt.Sprintf(T("old_ip_removed"), oldIP))
+		// 显式带前缀删除：iproute2 对不带前缀的 addr del 只是"通配删除"兼容行为，
+		// 官方已提示该行为未来会移除
+		oldSpec := oldIP
+		if out, err := RunCmd("ip", "-4", "-o", "addr", "show", "dev", iface); err == nil {
+			for _, line := range strings.Split(out, "\n") {
+				fields := strings.Fields(line)
+				for i, f := range fields {
+					if f == "inet" && i+1 < len(fields) && strings.HasPrefix(fields[i+1], oldIP+"/") {
+						oldSpec = fields[i+1]
+					}
+				}
+			}
+		}
+		if err := RunCmdSilent("ip", "addr", "del", oldSpec, "dev", iface); err == nil {
+			Info(fmt.Sprintf(T("old_ip_removed"), oldIP))
+		} else {
+			Warn(fmt.Sprintf(T("old_ip_remove_fail"), oldIP))
+		}
 	}
 
 	return nil
@@ -397,11 +448,11 @@ func CleanOtherInterfaces(keepIface string) {
 	}
 }
 
-// buildResolvContent 生成 resolv.conf 内容：阿里云 DNS 优先，原有其它 DNS 追加保留
-func buildResolvContent(enableIPv6 bool) string {
+// mergeResolvContent 生成 resolv.conf 内容：阿里云 DNS 优先，
+// 原有其它 nameserver 追加保留，search/domain/options/sortlist 等行原样保留。
+func mergeResolvContent(existing string, enableIPv6 bool) (content string, preserved []string) {
 	seen := map[string]bool{}
-	var content string
-	var preserved []string
+	var extra []string
 
 	add := func(ip string) {
 		if ip == "" || seen[ip] {
@@ -420,18 +471,36 @@ func buildResolvContent(enableIPv6 bool) string {
 		}
 	}
 
-	// 保留原有（内网）DNS，避免直接丢弃
-	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 && fields[0] == "nameserver" {
-				if !seen[fields[1]] {
-					preserved = append(preserved, fields[1])
-					add(fields[1])
-				}
-			}
+	for _, line := range strings.Split(existing, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
 		}
+		fields := strings.Fields(trimmed)
+		if len(fields) >= 2 && fields[0] == "nameserver" {
+			if !seen[fields[1]] {
+				preserved = append(preserved, fields[1])
+				add(fields[1])
+			}
+			continue
+		}
+		// search / domain / options / sortlist 等指令不能被丢掉，
+		// 否则内网短名解析与 ndots/timeout 策略会被重置
+		extra = append(extra, trimmed)
 	}
+	for _, l := range extra {
+		content += l + "\n"
+	}
+	return content, preserved
+}
+
+// buildResolvContent 读取现有 resolv.conf 并合并出新内容
+func buildResolvContent(enableIPv6 bool) string {
+	var existing string
+	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
+		existing = string(data)
+	}
+	content, preserved := mergeResolvContent(existing, enableIPv6)
 	if len(preserved) > 0 {
 		Info(fmt.Sprintf(T("dns_existing_kept"), strings.Join(preserved, " ")))
 	}
@@ -670,12 +739,15 @@ func upsertIPv6Block(path, iface, ipv6Addr, ipv6GW string) error {
 		out = append(out, lines[i])
 	}
 
-	// 2. 定位该网卡 inet/manual stanza 的结尾
-	insertIdx := -1
+	// 2. 定位该网卡 inet/manual stanza 的起止行
+	stanzaStart, insertIdx := -1, -1
 	inBlock := false
 	for i, line := range out {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) >= 3 && fields[0] == "iface" && fields[1] == iface && !strings.HasPrefix(fields[2], "inet6") {
+			if stanzaStart == -1 {
+				stanzaStart = i
+			}
 			inBlock = true
 			continue
 		}
@@ -695,11 +767,39 @@ func upsertIPv6Block(path, iface, ipv6Addr, ipv6GW string) error {
 		"    gateway " + ipv6GW,
 	}
 
+	// 3. 组装：需要时补 auto <iface>（否则重启后 ifup -a 不会拉起该配置）
+	hasAuto := false
+	for _, l := range out {
+		f := strings.Fields(strings.TrimSpace(l))
+		if len(f) >= 2 && (f[0] == "auto" || f[0] == "allow-hotplug") {
+			for _, name := range f[1:] {
+				if name == iface {
+					hasAuto = true
+				}
+			}
+		}
+	}
+
 	if insertIdx == -1 {
+		// 该网卡完全没有 stanza：追加 auto + inet6
+		if !hasAuto {
+			out = append(out, "auto "+iface)
+		}
 		out = append(out, block...)
 	} else {
-		inserted := append(append([]string{}, block...), out[insertIdx:]...)
-		out = append(out[:insertIdx], inserted...)
+		merged := make([]string, 0, len(out)+len(block)+1)
+		merged = append(merged, out[:insertIdx]...)
+		merged = append(merged, block...)
+		merged = append(merged, out[insertIdx:]...)
+		out = merged
+		if !hasAuto {
+			// 插到该网卡第一个 stanza 之前（auto 必须在 stanza 之前才直观）
+			merged = make([]string, 0, len(out)+1)
+			merged = append(merged, out[:stanzaStart]...)
+			merged = append(merged, "auto "+iface)
+			merged = append(merged, out[stanzaStart:]...)
+			out = merged
+		}
 	}
 
 	out = normalizeBlankLines(out)

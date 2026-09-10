@@ -143,36 +143,63 @@ func BondConfig() bool {
 			return false
 		}
 	}
+	// 先清理旧 bond 残留。注意 CleanBondResidual 会删除 bonding.conf，
+	// 因此必须放在写"开机加载模块"文件之前，否则刚写好的文件会被立刻删掉。
+	CleanBondResidual()
+
 	_ = os.MkdirAll("/etc/modules-load.d", 0755)
 	_ = os.WriteFile(bondModulePath, []byte("bonding\n"), 0644)
 	_ = RunCmdSilent("systemctl", "enable", "systemd-modules-load.service")
 	_ = RunCmdSilent("systemctl", "enable", "networking.service")
-	CleanBondResidual()
 
 	// 记录旧 IPv6 地址，供在线切换时精确清理（避免 flush 掉全部 global 地址）
 	oldIPv6 := GetConfiguredIPv6Address("bond0")
 
-	BackupFile(interfacesPath)
+	backup := BackupFile(interfacesPath)
 	Info(T("write_bond_config"))
 	if err := WriteBondConfig(selectedNics, ipv4Addr, ipv4Netmask, ipv4Gateway, bondMode, configIPv6, ipv6Addr, ipv6Gateway); err != nil {
 		Error(fmt.Sprintf(T("write_fail"), err))
+		RestoreFile(backup, interfacesPath)
 		return false
 	}
 	if !ValidateConfig("bond0") {
+		RestoreFile(backup, interfacesPath)
 		return false
 	}
 	Info(T("apply_network"))
 
-	// 创建 bond0，同时设置 miimon=100（立即生效）
+	// 创建 bond0（mode / miimon 在创建时确定）
 	if err := RunCmdSilent("ip", "link", "add", "bond0", "type", "bond", "mode", bondMode, "miimon", "100"); err != nil {
 		Error(fmt.Sprintf("failed to create bond0: %v", err))
 		return false
 	}
 
+	// 关键：lacp_rate 必须在 bond0 处于 DOWN 时写入。
+	// 内核会拒绝在接口 UP 之后修改 lacp_rate
+	// ("unable to set option because the bond is up")，
+	// Debian 的 /etc/network/if-pre-up.d/ifenslave 同样是在 up 之前用
+	// sysfs_change_down 写入该值。xmit_hash_policy 虽然运行时可改，
+	// 但在这里一并写入可保证两个参数一定生效。
+	if bondMode == "802.3ad" {
+		Info(T("apply_bond_params"))
+		if err := RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast"); err != nil {
+			Warn(fmt.Sprintf(T("bond_param_fail"), "lacp_rate=fast"))
+		}
+		if err := RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4"); err != nil {
+			Warn(fmt.Sprintf(T("bond_param_fail"), "xmit_hash_policy=layer3+4"))
+		}
+	}
+
 	// 计算 IPv4 前缀长度
 	mask := net.IPMask(net.ParseIP(ipv4Netmask).To4())
 	prefixLen, _ := mask.Size()
-	_ = RunCmdSilent("ip", "addr", "add", fmt.Sprintf("%s/%d", ipv4Addr, prefixLen), "dev", "bond0")
+	bondCIDR := fmt.Sprintf("%s/%d", ipv4Addr, prefixLen)
+
+	// 清除"未选中的其它网卡"上的同一 IP，否则会出现同 IP 多网卡冲突
+	// （这正是从单网卡切到 bond 时最常见的故障原因）
+	clearIPConflictOnOtherIfaces("bond0", ipv4Addr, bondCIDR)
+
+	_ = RunCmdSilent("ip", "addr", "replace", bondCIDR, "dev", "bond0")
 
 	// 挂载 slave 网卡
 	for _, nic := range selectedNics {
@@ -187,14 +214,14 @@ func BondConfig() bool {
 	Sleep(1)
 	_ = RunCmdSilent("ip", "link", "set", "bond0", "up")
 
-	// 实时设置 Bond 参数（在 up 之后，确保立即生效）
+	// 回读内核真实生效值（不信任退出码，避免"以为下发了其实没生效"）
 	if bondMode == "802.3ad" {
-		Info(T("apply_bond_params"))
-		err1 := RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "xmit_hash_policy", "layer3+4")
-		err2 := RunCmdSilent("ip", "link", "set", "bond0", "type", "bond", "lacp_rate", "fast")
-		if err1 == nil && err2 == nil {
-			Success(T("bond_params_applied"))
+		lacp := readBondOption("bond0", "lacp_rate")
+		hash := readBondOption("bond0", "xmit_hash_policy")
+		if lacp == "fast" && hash == "layer3+4" {
+			Success(fmt.Sprintf(T("bond_params_applied"), lacp, hash))
 		} else {
+			Warn(fmt.Sprintf(T("bond_params_mismatch"), lacp, hash))
 			Warn(T("bond_params_warn"))
 		}
 	}
@@ -243,7 +270,9 @@ func BondConfig() bool {
 			Warn(T("gw_ping_fail"))
 		}
 	}
-	if !CommandExists("ifenslave") {
+	// ifenslave 2.13 起不再提供同名可执行文件，只提供 ifupdown hook 脚本，
+	// 因此必须同时检测 hook 是否存在，否则会误判为"未安装"而反复 apt install。
+	if !ifenslaveAvailable() {
 		Info(T("ifenslave_missing_tip"))
 		Info(T("try_install_ifenslave"))
 		if installErr := RunCmdSilent("apt", "install", "-y", "-qq", "ifenslave"); installErr != nil {
@@ -256,4 +285,43 @@ func BondConfig() bool {
 	fmt.Println()
 	Success(T("bond_complete"))
 	return true
+}
+
+// ------------------------------
+// Bond 参数回读与依赖检测
+// ------------------------------
+
+// ifenslaveHookPath Debian ifenslave 包提供的 ifupdown hook
+// （bond-* 选项就是由它在上电/ifup 时写入内核的）
+const ifenslaveHookPath = "/etc/network/if-pre-up.d/ifenslave"
+
+// ifenslaveAvailable 判断 ifenslave 是否可用。
+// 新版 Debian（2.13+）只有 hook 脚本、没有同名可执行文件，故两者都要检测。
+func ifenslaveAvailable() bool {
+	if CommandExists("ifenslave") {
+		return true
+	}
+	if _, err := os.Stat(ifenslaveHookPath); err == nil {
+		return true
+	}
+	return false
+}
+
+// parseBondOptionValue 解析 bonding sysfs 文件内容，取首个字段。
+// 例如 "layer3+4 1\n" -> "layer3+4"，"fast 1\n" -> "fast"，空内容 -> "unknown"。
+func parseBondOptionValue(content string) string {
+	fields := strings.Fields(content)
+	if len(fields) == 0 {
+		return "unknown"
+	}
+	return fields[0]
+}
+
+// readBondOption 读取 /sys/class/net/<iface>/bonding/<opt> 的真实生效值
+func readBondOption(iface, opt string) string {
+	data, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/bonding/%s", iface, opt))
+	if err != nil {
+		return "unknown"
+	}
+	return parseBondOptionValue(string(data))
 }
